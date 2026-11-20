@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Omnivance Ledger — Unified Expense Tracker</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            cream: {
+              50: '#FDFBF7',
+              100: '#FAF7F2',
+              200: '#F5EFEB',
+              300: '#EFE7DE',
+              400: '#E4DAD0',
+            },
+            roseaccent: {
+              50: '#FFF5F5',
+              100: '#FFF1F2',
+              200: '#FFE4E6',
+              300: '#FECDD3',
+              400: '#FDA4AF',
+              500: '#F43F5E',
+              600: '#E11D48',
+              700: '#BE123C',
+              800: '#9F1239',
+              900: '#881337',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-cream-100 min-h-screen text-stone-800 antialiased selection:bg-roseaccent-200 selection:text-roseaccent-900">
+
+  <!-- Top Navigation Bar -->
+  <header class="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-cream-300">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between">
+      
+      <!-- Logo & Branding -->
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-roseaccent-600 to-roseaccent-800 flex items-center justify-center text-white shadow-md shadow-roseaccent-500/20">
+          <i data-lucide="split" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="text-xl font-bold tracking-tight text-stone-900">Omnivance</span>
+            <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-roseaccent-100 text-roseaccent-800 border border-roseaccent-200">Ledger</span>
+          </div>
+          <p class="text-xs text-stone-500 font-medium">From Friends Outings to Corporate Travel</p>
+        </div>
+      </div>
+
+      <!-- Center: Trip Selector Dropdown & Quick Mode Indicator -->
+      <div class="flex items-center gap-3">
+        <div class="relative">
+          <select id="tripSelector" class="appearance-none bg-cream-50 border border-cream-300 text-stone-800 text-sm font-semibold rounded-xl pl-3.5 pr-9 py-2 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 cursor-pointer shadow-sm">
+            <!-- Populated via JS -->
+          </select>
+          <i data-lucide="chevron-down" class="w-4 h-4 text-stone-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+        </div>
+
+        <span id="currentTripModeBadge" class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold border">
+          <!-- Populated via JS -->
+        </span>
+      </div>
+
+      <!-- Right CTAs -->
+      <div class="flex items-center gap-2.5">
+        <button id="btnNewTripModal" class="btn-rose-subtle px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5">
+          <i data-lucide="plus-circle" class="w-4 h-4"></i>
+          <span>New Trip</span>
+        </button>
+
+        <button id="btnAddExpenseModal" class="btn-rose-primary px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-2">
+          <i data-lucide="receipt-text" class="w-4 h-4"></i>
+          <span>Add Expense</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+    <!-- No Trips Empty State (Shown when 0 trips exist) -->
+    <div id="noTripsContainer" class="hidden text-center py-16 px-4 bg-white rounded-3xl border border-cream-300 shadow-sm max-w-2xl mx-auto my-8">
+      <div class="w-16 h-16 rounded-2xl bg-roseaccent-100 text-roseaccent-600 flex items-center justify-center mx-auto mb-4">
+        <i data-lucide="compass" class="w-8 h-8"></i>
+      </div>
+      <h2 class="text-2xl font-bold text-stone-900">Welcome to Omnivance Ledger</h2>
+      <p class="text-sm text-stone-500 mt-2 max-w-md mx-auto">
+        Your database is clean and ready. Create your first trip or corporate travel workspace to start tracking and splitting expenses!
+      </p>
+      <div class="mt-6 flex items-center justify-center gap-3">
+        <button id="btnEmptyStateNewTrip" class="btn-rose-primary px-6 py-3 rounded-xl text-sm font-semibold flex items-center gap-2">
+          <i data-lucide="plus-circle" class="w-4 h-4"></i>
+          <span>Create Your First Trip</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Active Trip Dashboard -->
+    <div id="activeTripDashboard">
+      <!-- Trip Header & Meta Banner -->
+      <div class="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-3">
+            <h1 id="tripTitle" class="text-2xl sm:text-3xl font-extrabold text-stone-900 tracking-tight">Loading Trip...</h1>
+            <span id="tripStatusPill" class="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">ACTIVE</span>
+          </div>
+          <p id="tripDescription" class="text-sm text-stone-500 mt-1 max-w-2xl">...</p>
+        </div>
+
+        <!-- Action Quick Bar: Export & Settle -->
+        <div class="flex items-center gap-2.5">
+          <button id="btnExportCsv" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-700 hover:bg-cream-50 flex items-center gap-1.5 transition">
+            <i data-lucide="download" class="w-4 h-4 text-stone-500"></i>
+            <span>Export CSV</span>
+          </button>
+          <button id="btnOpenSettleModal" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-roseaccent-100 text-roseaccent-800 border border-roseaccent-200 hover:bg-roseaccent-200 flex items-center gap-1.5 transition">
+            <i data-lucide="hand-coins" class="w-4 h-4 text-roseaccent-600"></i>
+            <span>Record Settlement</span>
+          </button>
+        </div>
+      </div>
+
+    <!-- 4 Key Dashboard Cards (Sleek Cream & Very Light Red) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+      
+      <!-- Card 1: Total Spend -->
+      <div class="card-cream p-5 rounded-2xl relative overflow-hidden">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold text-stone-500 uppercase tracking-wider">Total Trip Spend</span>
+          <div class="w-8 h-8 rounded-lg bg-roseaccent-100 text-roseaccent-700 flex items-center justify-center">
+            <i data-lucide="wallet" class="w-4 h-4"></i>
+          </div>
+        </div>
+        <div id="cardTotalSpend" class="text-2xl sm:text-3xl font-bold text-stone-900">₹0.00</div>
+        <div class="mt-3">
+          <div class="flex justify-between text-xs text-stone-500 mb-1">
+            <span>Budget Utilized</span>
+            <span id="budgetPercentLabel">0%</span>
+          </div>
+          <div class="w-full bg-cream-200 h-1.5 rounded-full overflow-hidden">
+            <div id="budgetProgressBar" class="bg-roseaccent-600 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 2: Your Balance Status -->
+      <div class="card-cream p-5 rounded-2xl relative overflow-hidden border-roseaccent-100 tint-red-subtle">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold text-roseaccent-900 uppercase tracking-wider">Your Balance (Alex)</span>
+          <div class="w-8 h-8 rounded-lg bg-white text-roseaccent-600 flex items-center justify-center shadow-sm">
+            <i data-lucide="scale" class="w-4 h-4"></i>
+          </div>
+        </div>
+        <div id="cardUserBalance" class="text-2xl sm:text-3xl font-bold text-roseaccent-800">₹0.00</div>
+        <p id="cardBalanceSubtext" class="text-xs text-roseaccent-700 font-medium mt-2 flex items-center gap-1">
+          <i data-lucide="info" class="w-3.5 h-3.5"></i>
+          <span>Settled up</span>
+        </p>
+      </div>
+
+      <!-- Card 3: Participants & Shares -->
+      <div class="card-cream p-5 rounded-2xl">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold text-stone-500 uppercase tracking-wider">Members & Fair Share</span>
+          <div class="w-8 h-8 rounded-lg bg-cream-200 text-stone-700 flex items-center justify-center">
+            <i data-lucide="users" class="w-4 h-4"></i>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="cardMemberCount" class="text-2xl sm:text-3xl font-bold text-stone-900">0</span>
+          <span class="text-xs text-stone-500 font-medium">members enrolled</span>
+        </div>
+        <div id="cardAvatarStack" class="flex -space-x-2 mt-3 overflow-hidden">
+          <!-- Avatars populated via JS -->
+        </div>
+      </div>
+
+      <!-- Card 4: Mode & Compliance Guard -->
+      <div class="card-cream p-5 rounded-2xl">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs font-semibold text-stone-500 uppercase tracking-wider">Trip Type & Guard</span>
+          <div class="w-8 h-8 rounded-lg bg-cream-200 text-stone-700 flex items-center justify-center">
+            <i data-lucide="shield-check" class="w-4 h-4"></i>
+          </div>
+        </div>
+        <div id="cardPolicyTitle" class="text-base font-bold text-stone-900">Social Mode</div>
+        <p id="cardPolicyDesc" class="text-xs text-stone-500 mt-1">Direct peer-to-peer splitting with minimum debt transactions.</p>
+        <div id="cardCorporateStatusPill" class="mt-2.5 hidden">
+          <!-- Shown if Corporate -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="flex items-center gap-2 border-b border-cream-300 pb-2 mb-6 overflow-x-auto">
+      <button class="tab-btn active px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition" data-tab="expenses">
+        <i data-lucide="receipt" class="w-4 h-4"></i>
+        <span>Expenses Ledger</span>
+        <span id="badgeExpenseCount" class="text-xs px-2 py-0.5 rounded-full bg-cream-200 text-stone-700">0</span>
+      </button>
+
+      <button class="tab-btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 text-stone-600 hover:text-stone-900 hover:bg-white transition" data-tab="balances">
+        <i data-lucide="arrow-left-right" class="w-4 h-4"></i>
+        <span>Balances & Settle Up</span>
+        <span id="badgeTransfersCount" class="text-xs px-2 py-0.5 rounded-full bg-roseaccent-100 text-roseaccent-800">0</span>
+      </button>
+
+      <button id="tabCorporateBtn" class="tab-btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 text-stone-600 hover:text-stone-900 hover:bg-white transition" data-tab="corporate">
+        <i data-lucide="briefcase" class="w-4 h-4"></i>
+        <span>Corporate Compliance</span>
+        <span id="badgePolicyViolations" class="hidden text-xs px-2 py-0.5 rounded-full bg-roseaccent-200 text-roseaccent-900 font-bold">!</span>
+      </button>
+
+      <button class="tab-btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 text-stone-600 hover:text-stone-900 hover:bg-white transition" data-tab="members">
+        <i data-lucide="user-check" class="w-4 h-4"></i>
+        <span>Trip Members</span>
+      </button>
+
+      <button class="tab-btn px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 text-stone-600 hover:text-stone-900 hover:bg-white transition" data-tab="all-expenses">
+        <i data-lucide="table-2" class="w-4 h-4"></i>
+        <span>All Expenses Tracker</span>
+        <span id="badgeAllExpensesTotal" class="text-xs px-2 py-0.5 rounded-full bg-cream-200 text-stone-700 font-bold">₹0</span>
+      </button>
+    </div>
+
+    <!-- Tab 1: Expenses Ledger -->
+    <section id="tab-expenses" class="tab-content block">
+      <!-- Filter Bar -->
+      <div class="bg-white p-4 rounded-2xl border border-cream-300 mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-xs font-semibold text-stone-500 uppercase tracking-wider mr-1">Filter:</span>
+          <button class="filter-pill active px-3 py-1.5 rounded-lg text-xs font-semibold bg-roseaccent-100 text-roseaccent-800 border border-roseaccent-200" data-cat="ALL">All Categories</button>
+          <button class="filter-pill px-3 py-1.5 rounded-lg text-xs font-semibold bg-cream-50 text-stone-600 hover:bg-cream-200" data-cat="FOOD">Food & Dining</button>
+          <button class="filter-pill px-3 py-1.5 rounded-lg text-xs font-semibold bg-cream-50 text-stone-600 hover:bg-cream-200" data-cat="STAY">Accommodation</button>
+          <button class="filter-pill px-3 py-1.5 rounded-lg text-xs font-semibold bg-cream-50 text-stone-600 hover:bg-cream-200" data-cat="TRAVEL">Travel & Cabs</button>
+          <button class="filter-pill px-3 py-1.5 rounded-lg text-xs font-semibold bg-cream-50 text-stone-600 hover:bg-cream-200" data-cat="ACTIVITIES">Activities</button>
+        </div>
+
+        <div class="text-xs text-stone-500">
+          Showing <span id="filteredExpenseCount" class="font-bold text-stone-800">0</span> expenses
+        </div>
+      </div>
+
+      <!-- Expense List Container -->
+      <div id="expensesList" class="space-y-3.5">
+        <!-- Rendered dynamically via JS -->
+      </div>
+    </section>
+
+    <!-- Tab 2: Balances & Settle Up (Debt Simplification) -->
+    <section id="tab-balances" class="tab-content hidden">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- Left 2 Cols: Simplified Debt Transfers (Who Pays Whom) -->
+        <div class="lg:col-span-2 space-y-4">
+          <div class="card-cream p-6 rounded-2xl">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="text-lg font-bold text-stone-900">Minimum Transaction Settlement</h3>
+                <p class="text-xs text-stone-500">Optimized via greedy graph simplification algorithm.</p>
+              </div>
+              <span class="text-xs px-2.5 py-1 rounded-lg bg-roseaccent-100 text-roseaccent-800 font-semibold">
+                Instant UPI Settle
+              </span>
+            </div>
+
+            <div id="settlementsList" class="space-y-3">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- Historical Completed Settlements -->
+          <div class="card-cream p-6 rounded-2xl">
+            <h3 class="text-base font-bold text-stone-900 mb-3">Settlement History</h3>
+            <div id="historySettlementsList" class="space-y-2 text-xs text-stone-600">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Col: Individual Member Ledger Breakdown -->
+        <div class="space-y-4">
+          <div class="card-cream p-6 rounded-2xl">
+            <h3 class="text-base font-bold text-stone-900 mb-4">Individual Member Shares</h3>
+            <div id="membersBalanceList" class="space-y-3">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Tab 3: Corporate Compliance & Approvals -->
+    <section id="tab-corporate" class="tab-content hidden">
+      <div class="card-cream p-6 rounded-2xl mb-6">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-6 border-b border-cream-200">
+          <div>
+            <div class="flex items-center gap-2">
+              <h2 class="text-xl font-bold text-stone-900">Corporate Expense Report & Compliance</h2>
+              <span id="corpApprovalStatusBadge" class="text-xs px-2.5 py-1 rounded-full font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                PENDING APPROVAL
+              </span>
+            </div>
+            <p class="text-xs text-stone-500 mt-1">Review policy violations, receipt compliance, and approve expense reimbursement.</p>
+          </div>
+
+          <!-- Manager Action Controls -->
+          <div id="managerApprovalActions" class="flex items-center gap-2">
+            <button id="btnApproveTrip" class="px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center gap-1.5 transition">
+              <i data-lucide="check-circle" class="w-4 h-4"></i>
+              <span>Approve Expense Report</span>
+            </button>
+            <button id="btnRejectTrip" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-roseaccent-300 text-roseaccent-800 hover:bg-roseaccent-50 flex items-center gap-1.5 transition">
+              <i data-lucide="x-circle" class="w-4 h-4"></i>
+              <span>Reject / Send Back</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Corporate Config Summary Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 my-6">
+          <div class="p-4 rounded-xl bg-cream-50 border border-cream-300">
+            <div class="text-xs text-stone-500 font-medium">Cost Center / Project Code</div>
+            <div id="corpCostCenter" class="text-sm font-bold text-stone-900 mt-1">ENG-DEVREL-2026</div>
+          </div>
+          <div class="p-4 rounded-xl bg-cream-50 border border-cream-300">
+            <div class="text-xs text-stone-500 font-medium">Daily Per-Diem Food Limit</div>
+            <div id="corpPerDiemLimit" class="text-sm font-bold text-stone-900 mt-1">₹3,000 / day</div>
+          </div>
+          <div class="p-4 rounded-xl bg-cream-50 border border-cream-300">
+            <div class="text-xs text-stone-500 font-medium">Mandatory Receipt Threshold</div>
+            <div id="corpReceiptThreshold" class="text-sm font-bold text-stone-900 mt-1">Expenses ≥ ₹500</div>
+          </div>
+        </div>
+
+        <!-- Audit & Policy Violations Table -->
+        <h3 class="text-sm font-bold text-stone-900 mb-3 flex items-center gap-2">
+          <i data-lucide="alert-triangle" class="w-4 h-4 text-roseaccent-600"></i>
+          <span>Automated Policy & Audit Checks</span>
+        </h3>
+        <div id="corpViolationsList" class="space-y-2.5">
+          <!-- Populated via JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 4: Members Tab -->
+    <section id="tab-members" class="tab-content hidden">
+      <div class="card-cream p-6 rounded-2xl">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h3 class="text-lg font-bold text-stone-900">Trip Participants</h3>
+            <p class="text-xs text-stone-500">Friends and colleagues sharing this trip workspace.</p>
+          </div>
+          <button id="btnOpenAddMemberModal" class="btn-rose-subtle px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5">
+            <i data-lucide="user-plus" class="w-4 h-4"></i>
+            <span>Add Member</span>
+          </button>
+        </div>
+
+        <div id="membersGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Populated via JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 5: All Expenses Tracker (End of Trip Master Ledger) -->
+    <section id="tab-all-expenses" class="tab-content hidden">
+      <div class="card-cream p-6 rounded-2xl mb-6">
+        
+        <!-- Header & Scope Filter -->
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-6 border-b border-cream-200">
+          <div>
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-lg bg-roseaccent-100 text-roseaccent-700 flex items-center justify-center font-bold">
+                <i data-lucide="layers" class="w-4 h-4"></i>
+              </div>
+              <h2 class="text-xl font-bold text-stone-900">All Expenses Master Ledger</h2>
+            </div>
+            <p class="text-xs text-stone-500 mt-1">Complete itemized audit, cumulative spending timeline, and member split breakdown at the end of the trip.</p>
+          </div>
+
+          <!-- Controls: Scope Toggle & Search -->
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex items-center bg-cream-50 p-1 rounded-xl border border-cream-300">
+              <button id="scopeCurrentTripBtn" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-stone-800 shadow-sm transition">Current Trip</button>
+              <button id="scopeAllTripsBtn" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-500 hover:text-stone-800 transition">All Trips</button>
+            </div>
+
+            <div class="relative">
+              <input type="text" id="allExpensesSearchInput" placeholder="Search expenses..." class="text-xs px-3 py-2 pl-8 rounded-xl border border-cream-300 bg-cream-50 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30">
+              <i data-lucide="search" class="w-3.5 h-3.5 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2"></i>
+            </div>
+
+            <button id="btnPrintReport" class="px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-700 hover:bg-cream-100 flex items-center gap-1.5 transition">
+              <i data-lucide="printer" class="w-3.5 h-3.5 text-stone-500"></i>
+              <span>Print</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 Quick Audit Summary Cards -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 my-6">
+          <div class="p-4 rounded-xl bg-cream-50 border border-cream-200">
+            <div class="text-[11px] text-stone-500 font-semibold uppercase tracking-wider">Grand Total Tracked</div>
+            <div id="auditGrandTotal" class="text-xl font-bold text-stone-900 mt-1">₹0.00</div>
+            <div id="auditItemsCount" class="text-[11px] text-stone-400 mt-0.5">0 transactions logged</div>
+          </div>
+          <div class="p-4 rounded-xl bg-cream-50 border border-cream-200">
+            <div class="text-[11px] text-stone-500 font-semibold uppercase tracking-wider">Average Per Expense</div>
+            <div id="auditAvgExpense" class="text-xl font-bold text-stone-900 mt-1">₹0.00</div>
+            <div class="text-[11px] text-stone-400 mt-0.5">Mean transaction value</div>
+          </div>
+          <div class="p-4 rounded-xl bg-cream-50 border border-cream-200">
+            <div class="text-[11px] text-stone-500 font-semibold uppercase tracking-wider">Top Spending Category</div>
+            <div id="auditTopCategory" class="text-xl font-bold text-roseaccent-800 mt-1">-</div>
+            <div id="auditTopCategoryAmount" class="text-[11px] text-stone-400 mt-0.5">₹0 spent</div>
+          </div>
+          <div class="p-4 rounded-xl bg-cream-50 border border-cream-200">
+            <div class="text-[11px] text-stone-500 font-semibold uppercase tracking-wider">Per Person Average Share</div>
+            <div id="auditPerPersonShare" class="text-xl font-bold text-stone-900 mt-1">₹0.00</div>
+            <div id="auditMembersActive" class="text-[11px] text-stone-400 mt-0.5">Across active members</div>
+          </div>
+        </div>
+
+        <!-- Category Spend Distribution Bar -->
+        <div class="mb-6 p-4 rounded-xl bg-cream-50 border border-cream-200">
+          <div class="flex items-center justify-between text-xs font-semibold text-stone-600 mb-2">
+            <span>End-of-Trip Spending Breakdown by Category</span>
+            <span id="auditCategoryPills" class="flex items-center gap-2 flex-wrap text-[11px]"></span>
+          </div>
+          <div id="auditCategoryBar" class="w-full bg-cream-200 h-2.5 rounded-full overflow-hidden flex">
+            <!-- Dynamic segments -->
+          </div>
+        </div>
+
+        <!-- Master Expense Table -->
+        <div class="overflow-x-auto rounded-xl border border-cream-200 bg-white">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="bg-cream-100 text-stone-600 border-b border-cream-200 font-bold uppercase tracking-wider text-[11px]">
+                <th class="py-3 px-3.5">#</th>
+                <th class="py-3 px-3.5">Date</th>
+                <th class="py-3 px-3.5">Expense Details</th>
+                <th class="py-3 px-3.5">Category</th>
+                <th class="py-3 px-3.5">Paid By</th>
+                <th class="py-3 px-3.5">Split Breakdown</th>
+                <th class="py-3 px-3.5 text-right">Amount</th>
+                <th class="py-3 px-3.5 text-right">Running Total</th>
+              </tr>
+            </thead>
+            <tbody id="allExpensesTableBody" class="divide-y divide-cream-100 text-stone-700">
+              <!-- Dynamically populated via JS -->
+            </tbody>
+            <tfoot class="bg-cream-50 border-t-2 border-cream-300 font-bold text-stone-900 text-xs">
+              <tr>
+                <td colspan="6" class="py-3.5 px-3.5 text-right uppercase tracking-wider">Grand Total Tracked:</td>
+                <td id="tableGrandTotalAmount" class="py-3.5 px-3.5 text-right text-sm text-roseaccent-800">₹0.00</td>
+                <td class="py-3.5 px-3.5 text-right text-stone-500 font-normal">End of Ledger</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <!-- End-of-Trip Member Settlement Reconciliation -->
+        <div class="mt-8 pt-6 border-t border-cream-200">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-base font-bold text-stone-900">Final Member Settlement Summary</h3>
+              <p class="text-xs text-stone-500">Each person's total payments vs. fair share owed at the end of this trip.</p>
+            </div>
+            <button onclick="switchTab('balances')" class="btn-rose-subtle px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5">
+              <i data-lucide="hand-coins" class="w-3.5 h-3.5"></i>
+              <span>Go to Settle Up</span>
+            </button>
+          </div>
+
+          <div id="allExpensesMemberSummaryGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+      </div>
+    </section>
+    </div> <!-- Close #activeTripDashboard -->
+
+  </main>
+
+  <!-- ==================== MODALS ==================== -->
+
+  <!-- Modal: Add Expense -->
+  <div id="modalAddExpense" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-cream-300 animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between pb-4 border-b border-cream-200">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-roseaccent-100 text-roseaccent-700 flex items-center justify-center">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+          </div>
+          <h3 class="text-lg font-bold text-stone-900">Record an Expense</h3>
+        </div>
+        <button class="close-modal text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="formAddExpense" class="mt-5 space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Expense Title / Description *</label>
+          <input type="text" id="expTitle" required placeholder="e.g. Seafood Dinner or Airport Cab" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 bg-cream-50">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-stone-700 mb-1">Amount (<span id="modalCurrencySymbol">₹</span>) *</label>
+            <input type="number" id="expAmount" step="0.01" min="1" required placeholder="0.00" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 bg-cream-50 font-bold">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-stone-700 mb-1">Date</label>
+            <input type="date" id="expDate" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 bg-cream-50">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-stone-700 mb-1">Category</label>
+            <select id="expCategory" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 bg-cream-50">
+              <option value="FOOD">Food & Dining</option>
+              <option value="STAY">Accommodation</option>
+              <option value="TRAVEL">Transit & Flight</option>
+              <option value="ACTIVITIES">Activities & Sightseeing</option>
+              <option value="OTHER">Supplies & Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-stone-700 mb-1">Paid By *</label>
+            <select id="expPaidBy" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 bg-cream-50 font-medium">
+              <!-- Populated via JS -->
+            </select>
+          </div>
+        </div>
+
+        <!-- Split Selection -->
+        <div class="pt-2">
+          <label class="block text-xs font-semibold text-stone-700 mb-1.5">Split Between Members</label>
+          <div id="splitMembersCheckboxes" class="p-3 bg-cream-50 border border-cream-300 rounded-xl space-y-2 max-h-36 overflow-y-auto">
+            <!-- Populated via JS -->
+          </div>
+          <p id="splitSharePreview" class="text-xs text-roseaccent-700 font-semibold mt-1.5 text-right">Estimated share: ₹0.00 / person</p>
+        </div>
+
+        <!-- Receipt Attachment / Simulation -->
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Receipt Attachment (Required for Corp > ₹500)</label>
+          <div class="flex items-center gap-2">
+            <input type="text" id="expReceipt" placeholder="e.g. invoice_102.pdf or cab_bill.png" class="flex-1 text-sm px-3.5 py-2 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 bg-cream-50">
+            <button type="button" id="btnSimulateReceipt" class="px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-600 hover:bg-cream-100 flex items-center gap-1">
+              <i data-lucide="paperclip" class="w-3.5 h-3.5"></i>
+              <span>Attach Mock</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="pt-3 flex items-center justify-end gap-3">
+          <button type="button" class="close-modal px-4 py-2.5 rounded-xl text-xs font-semibold text-stone-600 hover:bg-cream-100">Cancel</button>
+          <button type="submit" class="btn-rose-primary px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5">
+            <i data-lucide="check" class="w-4 h-4"></i>
+            <span>Save Expense</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: New Trip -->
+  <div id="modalNewTrip" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-cream-300 animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between pb-4 border-b border-cream-200">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-roseaccent-100 text-roseaccent-700 flex items-center justify-center">
+            <i data-lucide="compass" class="w-4 h-4"></i>
+          </div>
+          <h3 class="text-lg font-bold text-stone-900">Create New Trip / Workspace</h3>
+        </div>
+        <button class="close-modal text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="formNewTrip" class="mt-5 space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Trip Name *</label>
+          <input type="text" id="tripName" required placeholder="e.g. Manali Ski Trip or Q1 Client Visit" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 bg-cream-50 font-medium">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Members / Friends (Comma-separated names) *</label>
+          <input type="text" id="tripMemberNames" required placeholder="e.g. Rahul, Priya, Alex, Maya" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 bg-cream-50 font-medium">
+          <p class="text-[11px] text-stone-400 mt-1">Enter your friends or coworkers who will share expenses in this trip.</p>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Trip Mode / Profile *</label>
+          <div class="grid grid-cols-3 gap-2">
+            <label class="cursor-pointer">
+              <input type="radio" name="tripModeOption" value="SOCIAL" checked class="peer sr-only">
+              <div class="p-3 rounded-xl border border-cream-300 text-center peer-checked:border-roseaccent-500 peer-checked:bg-roseaccent-50 peer-checked:text-roseaccent-900 transition">
+                <i data-lucide="users" class="w-4 h-4 mx-auto mb-1 text-emerald-600"></i>
+                <div class="text-xs font-bold">Friends Trip</div>
+                <div class="text-[10px] text-stone-500">P2P Splits</div>
+              </div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="radio" name="tripModeOption" value="HYBRID" class="peer sr-only">
+              <div class="p-3 rounded-xl border border-cream-300 text-center peer-checked:border-roseaccent-500 peer-checked:bg-roseaccent-50 peer-checked:text-roseaccent-900 transition">
+                <i data-lucide="party-popper" class="w-4 h-4 mx-auto mb-1 text-amber-600"></i>
+                <div class="text-xs font-bold">Team Offsite</div>
+                <div class="text-[10px] text-stone-500">Hybrid</div>
+              </div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="radio" name="tripModeOption" value="CORPORATE" class="peer sr-only">
+              <div class="p-3 rounded-xl border border-cream-300 text-center peer-checked:border-roseaccent-500 peer-checked:bg-roseaccent-50 peer-checked:text-roseaccent-900 transition">
+                <i data-lucide="briefcase" class="w-4 h-4 mx-auto mb-1 text-roseaccent-600"></i>
+                <div class="text-xs font-bold">Corporate</div>
+                <div class="text-[10px] text-stone-500">T&E Audit</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-stone-700 mb-1">Destination</label>
+            <input type="text" id="tripDestination" placeholder="e.g. Mumbai, India" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 bg-cream-50">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-stone-700 mb-1">Budget Target (₹)</label>
+            <input type="number" id="tripBudget" placeholder="50000" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 bg-cream-50 font-semibold">
+          </div>
+        </div>
+
+        <!-- Corporate Extra Config (Dynamic) -->
+        <div id="corporateTripSettings" class="hidden p-3.5 rounded-2xl bg-roseaccent-50 border border-roseaccent-200 space-y-3">
+          <div class="text-xs font-bold text-roseaccent-900 flex items-center gap-1.5">
+            <i data-lucide="shield-alert" class="w-3.5 h-3.5 text-roseaccent-600"></i>
+            <span>Corporate Travel Compliance Rules</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2.5">
+            <div>
+              <label class="block text-[11px] font-semibold text-stone-600 mb-0.5">Cost Center Code</label>
+              <input type="text" id="corpInputCostCenter" value="SALES-TRIP-2026" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white">
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-stone-600 mb-0.5">Per-Diem Meal Cap (₹)</label>
+              <input type="number" id="corpInputPerDiem" value="3000" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-cream-300 bg-white font-semibold">
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-3 flex items-center justify-end gap-3">
+          <button type="button" class="close-modal px-4 py-2.5 rounded-xl text-xs font-semibold text-stone-600 hover:bg-cream-100">Cancel</button>
+          <button type="submit" class="btn-rose-primary px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span>Create Trip</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Record Settle Payment -->
+  <div id="modalSettlePayment" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-cream-300 animate-in fade-in zoom-in-95 duration-200">
+      <div class="flex items-center justify-between pb-4 border-b border-cream-200">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+            <i data-lucide="check" class="w-4 h-4"></i>
+          </div>
+          <h3 class="text-lg font-bold text-stone-900">Record a Settlement</h3>
+        </div>
+        <button class="close-modal text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="formSettlePayment" class="mt-5 space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Who Paid (From)</label>
+          <select id="settleFromUser" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 bg-cream-50 font-medium">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Who Received (To)</label>
+          <select id="settleToUser" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 bg-cream-50 font-medium">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Amount Paid (₹)</label>
+          <input type="number" id="settleAmount" step="0.01" min="1" required placeholder="0.00" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 bg-cream-50 font-bold">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Reference / Note (Optional)</label>
+          <input type="text" id="settleReference" placeholder="e.g. Paid via GooglePay / Cash" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 bg-cream-50">
+        </div>
+
+        <div class="pt-3 flex items-center justify-end gap-3">
+          <button type="button" class="close-modal px-4 py-2.5 rounded-xl text-xs font-semibold text-stone-600 hover:bg-cream-100">Cancel</button>
+          <button type="submit" class="btn-rose-primary px-5 py-2.5 rounded-xl text-xs font-semibold">
+            Confirm Settlement
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Add Member -->
+  <div id="modalAddMember" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-cream-300 animate-in fade-in zoom-in-95 duration-200">
+      <div class="flex items-center justify-between pb-4 border-b border-cream-200">
+        <h3 class="text-lg font-bold text-stone-900">Add Friend or Colleague</h3>
+        <button class="close-modal text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="formAddMember" class="mt-4 space-y-3.5">
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Full Name *</label>
+          <input type="text" id="newMemberName" required placeholder="e.g. Samarth Gupta" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 bg-cream-50">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">Email</label>
+          <input type="email" id="newMemberEmail" placeholder="samarth@example.com" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 bg-cream-50">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-stone-700 mb-1">UPI ID (For 1-click settlement)</label>
+          <input type="text" id="newMemberUpi" placeholder="samarth@okaxis" class="w-full text-sm px-3.5 py-2.5 rounded-xl border border-cream-300 bg-cream-50">
+        </div>
+
+        <div class="pt-3 flex items-center justify-end gap-3">
+          <button type="button" class="close-modal px-4 py-2 rounded-xl text-xs font-semibold text-stone-600 hover:bg-cream-100">Cancel</button>
+          <button type="submit" class="btn-rose-primary px-5 py-2 rounded-xl text-xs font-semibold">
+            Add to Group
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <!-- Application Logic -->
+  <script src="app.js"></script>
+</body>
+</html>

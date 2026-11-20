@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+server/node_modules/
+
+# Environment and secrets
+.env
+.env.*
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Temporary and cache files
+.tmp*
+server/data/db.tmp.json
+.DS_Store
+Thumbs.db

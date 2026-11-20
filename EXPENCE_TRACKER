@@ -1,0 +1,13 @@
+Expense tracker
+
+Purpose
+    To track the expenses of the trip by friends
+
+1. Only one person will manager the expenses. No need of user management.
+2. One person will add memeber in his app
+3. Only this person will enter the expenses
+4. Each expense should capture date, description, amount
+5. For one expense, there could be a sub set of friend sharing the expense.
+ Not all.
+6. A view will show the expenses by a person
+7. A settle button at the end of trip will show the expense split by each person
