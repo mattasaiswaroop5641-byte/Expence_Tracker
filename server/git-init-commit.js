@@ -53,9 +53,6 @@ async function main() {
 
   console.log('✓ Committed:', sha);
 
-  // Set branch to main
-  await git.branch({ fs, dir: rootDir, ref: 'main', checkout: true });
-
   // Add remote origin
   const remoteUrl = 'https://github.com/mattasaiswaroop5641-byte/Expence_Tracker.git';
   try {
