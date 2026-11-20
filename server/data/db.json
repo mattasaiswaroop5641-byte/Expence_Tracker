@@ -1,6 +1,93 @@
 {
-  "users": [],
-  "trips": [],
-  "expenses": [],
+  "users": [
+    {
+      "id": "u_sai_3655",
+      "name": "sai",
+      "email": "sai@example.com",
+      "avatar": "https://api.dicebear.com/7.x/notionists/svg?seed=sai",
+      "upiId": "",
+      "role": "EMPLOYEE"
+    },
+    {
+      "id": "u_deepak_3657",
+      "name": "deepak",
+      "email": "deepak@example.com",
+      "avatar": "https://api.dicebear.com/7.x/notionists/svg?seed=deepak",
+      "upiId": "",
+      "role": "EMPLOYEE"
+    },
+    {
+      "id": "u_kiran_3668",
+      "name": "kiran",
+      "email": "kiran@example.com",
+      "avatar": "https://api.dicebear.com/7.x/notionists/svg?seed=kiran",
+      "upiId": "",
+      "role": "EMPLOYEE"
+    },
+    {
+      "id": "u_chandu_3680",
+      "name": "chandu",
+      "email": "chandu@example.com",
+      "avatar": "https://api.dicebear.com/7.x/notionists/svg?seed=chandu",
+      "upiId": "",
+      "role": "EMPLOYEE"
+    }
+  ],
+  "trips": [
+    {
+      "id": "trip_1795164073689",
+      "title": "goa",
+      "mode": "SOCIAL",
+      "currency": "INR",
+      "currencySymbol": "₹",
+      "destination": "goa",
+      "description": "",
+      "members": [
+        "u_sai_3655",
+        "u_deepak_3657",
+        "u_kiran_3668",
+        "u_chandu_3680"
+      ],
+      "createdAt": "2026-11-20T08:41:13.689Z",
+      "status": "ACTIVE",
+      "budget": 15000,
+      "corporateConfig": null
+    }
+  ],
+  "expenses": [
+    {
+      "id": "exp_eefb52c4",
+      "tripId": "trip_1795164073689",
+      "title": "food",
+      "amount": 1000,
+      "currency": "INR",
+      "date": "2026-11-20",
+      "category": "FOOD",
+      "paidBy": "u_sai_3655",
+      "splitType": "EQUAL",
+      "splits": [
+        {
+          "userId": "u_sai_3655",
+          "amount": 250
+        },
+        {
+          "userId": "u_deepak_3657",
+          "amount": 250
+        },
+        {
+          "userId": "u_kiran_3668",
+          "amount": 250
+        },
+        {
+          "userId": "u_chandu_3680",
+          "amount": 250
+        }
+      ],
+      "isReimbursable": false,
+      "receipt": null,
+      "notes": "",
+      "policyFlags": []
+    }
+  ],
   "settlements": []
 }

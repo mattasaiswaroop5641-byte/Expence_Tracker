@@ -1,0 +1,41 @@
+name: Run & Verify on GitHub
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'npm'
+        cache-dependency-path: server/package-lock.json
+
+    - name: Install Dependencies
+      run: |
+        cd server
+        npm install
+
+    - name: Run Automated Tests
+      run: |
+        cd server
+        npm test
+
+    - name: Start Server & Test Health Endpoint
+      run: |
+        cd server
+        node src/server.js &
+        sleep 4
+        curl -f http://localhost:5000/api/health
+        curl -f http://localhost:5000/api/trips
