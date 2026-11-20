@@ -47,16 +47,305 @@ function renderEmptyState() {
   if (window.lucide) lucide.createIcons();
 }
 
+const isClientOnly = window.location.hostname.includes('github.io') || window.location.protocol === 'file:';
+
+// Local storage database for GitHub Pages & offline fallback
+const localDb = {
+  load() {
+    try {
+      const stored = localStorage.getItem('omnivance_ledger_db');
+      if (stored) return JSON.parse(stored);
+    } catch (e) {}
+    return { users: [], trips: [], expenses: [], settlements: [] };
+  },
+  save(data) {
+    try {
+      localStorage.setItem('omnivance_ledger_db', JSON.stringify(data));
+    } catch (e) {}
+  }
+};
+
+function clientCalculateBalances(tripId) {
+  const db = localDb.load();
+  const trip = db.trips.find(t => t.id === tripId);
+  if (!trip) return null;
+  const expenses = db.expenses.filter(e => e.tripId === tripId);
+  const settlements = db.settlements.filter(s => s.tripId === tripId);
+
+  const memberBalances = {};
+  const memberSpent = {};
+  const memberShare = {};
+
+  (trip.members || []).forEach(mId => {
+    memberBalances[mId] = 0;
+    memberSpent[mId] = 0;
+    memberShare[mId] = 0;
+  });
+
+  let totalTripSpent = 0;
+  expenses.forEach(exp => {
+    const amount = Number(exp.amount) || 0;
+    totalTripSpent += amount;
+    if (memberBalances[exp.paidBy] !== undefined) {
+      memberBalances[exp.paidBy] += amount;
+      memberSpent[exp.paidBy] += amount;
+    }
+    (exp.splits || []).forEach(split => {
+      const splitAmt = Number(split.amount) || 0;
+      if (memberBalances[split.userId] !== undefined) {
+        memberBalances[split.userId] -= splitAmt;
+        memberShare[split.userId] += splitAmt;
+      }
+    });
+  });
+
+  settlements.forEach(stl => {
+    const amt = Number(stl.amount) || 0;
+    if (memberBalances[stl.fromUser] !== undefined) memberBalances[stl.fromUser] += amt;
+    if (memberBalances[stl.toUser] !== undefined) memberBalances[stl.toUser] -= amt;
+  });
+
+  const membersSummary = (trip.members || []).map(mId => {
+    const user = db.users.find(u => u.id === mId) || { id: mId, name: mId, avatar: '' };
+    const net = Math.round((memberBalances[mId] || 0) * 100) / 100;
+    return {
+      userId: mId,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar,
+      upiId: user.upiId,
+      totalPaid: Math.round((memberSpent[mId] || 0) * 100) / 100,
+      totalShare: Math.round((memberShare[mId] || 0) * 100) / 100,
+      netBalance: net
+    };
+  });
+
+  const debtors = membersSummary.filter(m => m.netBalance < -0.01).map(d => ({ ...d })).sort((a, b) => a.netBalance - b.netBalance);
+  const creditors = membersSummary.filter(m => m.netBalance > 0.01).map(c => ({ ...c })).sort((a, b) => b.netBalance - a.netBalance);
+
+  const simplifiedTransfers = [];
+  let dIdx = 0, cIdx = 0;
+  while (dIdx < debtors.length && cIdx < creditors.length) {
+    const debtor = debtors[dIdx];
+    const creditor = creditors[cIdx];
+    const amt = Math.min(-debtor.netBalance, creditor.netBalance);
+    if (amt > 0.01) {
+      const rounded = Math.round(amt * 100) / 100;
+      simplifiedTransfers.push({
+        fromUser: debtor.userId,
+        fromName: debtor.name,
+        toUser: creditor.userId,
+        toName: creditor.name,
+        toUpiId: creditor.upiId,
+        amount: rounded,
+        currency: trip.currency || 'INR',
+        currencySymbol: trip.currencySymbol || '₹',
+        upiPaymentUrl: creditor.upiId ? `upi://pay?pa=${encodeURIComponent(creditor.upiId)}&pn=${encodeURIComponent(creditor.name)}&am=${rounded}&cu=${trip.currency || 'INR'}&tn=${encodeURIComponent('Settle ' + trip.title)}` : null
+      });
+      debtor.netBalance += amt;
+      creditor.netBalance -= amt;
+    }
+    if (Math.abs(debtor.netBalance) < 0.01) dIdx++;
+    if (Math.abs(creditor.netBalance) < 0.01) cIdx++;
+  }
+
+  return {
+    tripId,
+    totalTripSpent: Math.round(totalTripSpent * 100) / 100,
+    currency: trip.currency,
+    currencySymbol: trip.currencySymbol,
+    membersSummary,
+    simplifiedTransfers,
+    completedSettlements: settlements
+  };
+}
+
+function clientEvaluatePolicy(expense, trip) {
+  const flags = [];
+  if (!trip || (trip.mode !== 'CORPORATE' && trip.mode !== 'HYBRID')) return flags;
+  const cfg = trip.corporateConfig || {};
+  const perDiem = Number(cfg.perDiemLimit) || 0;
+  const threshold = Number(cfg.receiptRequiredThreshold) || 500;
+  const amt = Number(expense.amount) || 0;
+
+  if (amt >= threshold && (!expense.receipt || expense.receipt.trim() === '')) {
+    flags.push({ code: 'RECEIPT_REQUIRED', severity: 'WARNING', message: `Receipt mandatory for business expenses ≥ ${trip.currencySymbol || '₹'}${threshold}` });
+  }
+  if (perDiem > 0 && expense.category === 'FOOD') {
+    const count = (expense.splits && expense.splits.length) ? expense.splits.length : 1;
+    const perPerson = amt / count;
+    if (perPerson > perDiem) {
+      flags.push({ code: 'PER_DIEM_EXCEEDED', severity: 'WARNING', message: `Per-person food share (${trip.currencySymbol || '₹'}${Math.round(perPerson)}) exceeds daily allowance cap (${trip.currencySymbol || '₹'}${perDiem})` });
+    }
+  }
+  return flags;
+}
+
+// Universal API fetcher with automatic fallback to localStorage
+async function api(path, options = {}) {
+  if (!isClientOnly) {
+    try {
+      const res = await fetch(`${API_BASE}${path}`, options);
+      if (res.ok) return await res.json();
+    } catch (e) {
+      console.warn('API unreachable, falling back to local client database:', e);
+    }
+  }
+
+  // Client-side fallback handler
+  const method = (options.method || 'GET').toUpperCase();
+  const body = options.body ? JSON.parse(options.body) : {};
+  const db = localDb.load();
+
+  if (path === '/users' && method === 'GET') return db.users;
+  if (path === '/users' && method === 'POST') {
+    const newUser = {
+      id: `u_${Date.now()}`,
+      name: body.name,
+      email: body.email || '',
+      upiId: body.upiId || '',
+      avatar: `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(body.name)}`,
+      role: 'EMPLOYEE'
+    };
+    db.users.push(newUser);
+    localDb.save(db);
+    return newUser;
+  }
+
+  if (path === '/trips' && method === 'GET') return db.trips;
+  if (path === '/trips' && method === 'POST') {
+    let finalMemberIds = [];
+    if (Array.isArray(body.memberNames)) {
+      body.memberNames.forEach(raw => {
+        const name = String(raw).trim();
+        if (!name) return;
+        let u = db.users.find(user => user.name.toLowerCase() === name.toLowerCase());
+        if (!u) {
+          u = {
+            id: `u_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now().toString().slice(-4)}`,
+            name,
+            email: `${name.toLowerCase()}@example.com`,
+            avatar: `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(name)}`,
+            upiId: '',
+            role: 'EMPLOYEE'
+          };
+          db.users.push(u);
+        }
+        if (!finalMemberIds.includes(u.id)) finalMemberIds.push(u.id);
+      });
+    }
+
+    const newTrip = {
+      id: `trip_${Date.now()}`,
+      title: body.title,
+      mode: body.mode || 'SOCIAL',
+      destination: body.destination || '',
+      budget: Number(body.budget) || 0,
+      currency: 'INR',
+      currencySymbol: '₹',
+      members: finalMemberIds.length > 0 ? finalMemberIds : ['u_default'],
+      status: 'ACTIVE',
+      corporateConfig: (body.mode === 'CORPORATE' || body.mode === 'HYBRID') ? {
+        costCenter: (body.corporateConfig && body.corporateConfig.costCenter) || 'CORP-GEN',
+        perDiemLimit: Number(body.corporateConfig && body.corporateConfig.perDiemLimit) || 3000,
+        receiptRequiredThreshold: 500,
+        approvalStatus: 'DRAFT'
+      } : null
+    };
+    db.trips.unshift(newTrip);
+    localDb.save(db);
+    return newTrip;
+  }
+
+  if (path.startsWith('/trips/') && method === 'GET') {
+    const parts = path.split('/');
+    const tripId = parts[2];
+    if (parts.length === 3) return db.trips.find(t => t.id === tripId);
+    if (parts[3] === 'expenses') return db.expenses.filter(e => e.tripId === tripId);
+    if (parts[3] === 'balances') return clientCalculateBalances(tripId);
+  }
+
+  if (path.startsWith('/trips/') && path.endsWith('/expenses') && method === 'POST') {
+    const tripId = path.split('/')[2];
+    const trip = db.trips.find(t => t.id === tripId);
+    const amount = Number(body.amount) || 0;
+    const splitMembers = Array.isArray(body.splits) ? body.splits : (trip ? trip.members : []);
+    const count = splitMembers.length || 1;
+    const share = Math.round((amount / count) * 100) / 100;
+    let remainder = Math.round((amount - (share * count)) * 100) / 100;
+
+    const splits = splitMembers.map((uid, idx) => ({
+      userId: uid,
+      amount: idx === 0 ? Math.round((share + remainder) * 100) / 100 : share
+    }));
+
+    const newExp = {
+      id: `exp_${Date.now()}`,
+      tripId,
+      title: body.title,
+      amount,
+      currency: 'INR',
+      date: body.date || new Date().toISOString().split('T')[0],
+      category: body.category || 'OTHER',
+      paidBy: body.paidBy,
+      splitType: 'EQUAL',
+      splits,
+      receipt: body.receipt || null,
+      notes: body.notes || '',
+      policyFlags: []
+    };
+    newExp.policyFlags = clientEvaluatePolicy(newExp, trip);
+    db.expenses.unshift(newExp);
+    localDb.save(db);
+    return newExp;
+  }
+
+  if (path.startsWith('/trips/') && path.endsWith('/settle') && method === 'POST') {
+    const tripId = path.split('/')[2];
+    const newSettle = {
+      id: `stl_${Date.now()}`,
+      tripId,
+      fromUser: body.fromUser,
+      toUser: body.toUser,
+      amount: Number(body.amount) || 0,
+      date: new Date().toISOString(),
+      reference: body.reference || 'Settlement'
+    };
+    db.settlements.push(newSettle);
+    localDb.save(db);
+    return { settlement: newSettle, updatedBalances: clientCalculateBalances(tripId) };
+  }
+
+  if (path.startsWith('/trips/') && path.endsWith('/approve') && method === 'POST') {
+    const tripId = path.split('/')[2];
+    const trip = db.trips.find(t => t.id === tripId);
+    if (trip && trip.corporateConfig) {
+      trip.corporateConfig.approvalStatus = body.action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+      localDb.save(db);
+    }
+    return { trip };
+  }
+
+  if (path.startsWith('/expenses/') && method === 'DELETE') {
+    const expId = path.split('/')[2];
+    db.expenses = db.expenses.filter(e => e.id !== expId);
+    localDb.save(db);
+    return { success: true };
+  }
+
+  if (path === '/expenses' && method === 'GET') return db.expenses;
+
+  return {};
+}
+
 // ==================== API HELPERS ====================
 
 async function fetchUsers() {
-  const res = await fetch(`${API_BASE}/users`);
-  state.users = await res.json();
+  state.users = await api('/users');
 }
 
 async function fetchTrips() {
-  const res = await fetch(`${API_BASE}/trips`);
-  state.trips = await res.json();
+  state.trips = await api('/trips');
   renderTripSelector();
 }
 
@@ -68,18 +357,16 @@ async function selectTrip(tripId) {
   document.getElementById('noTripsContainer').classList.add('hidden');
   document.getElementById('activeTripDashboard').classList.remove('hidden');
 
-  const tripRes = await fetch(`${API_BASE}/trips/${tripId}`);
-  state.currentTrip = await tripRes.json();
-
-  const [expRes, balRes] = await Promise.all([
-    fetch(`${API_BASE}/trips/${tripId}/expenses`),
-    fetch(`${API_BASE}/trips/${tripId}/balances`)
+  state.currentTrip = await api(`/trips/${tripId}`);
+  const [expenses, balances] = await Promise.all([
+    api(`/trips/${tripId}/expenses`),
+    api(`/trips/${tripId}/balances`)
   ]);
 
-  state.expenses = await expRes.json();
-  state.balances = await balRes.json();
+  state.expenses = expenses || [];
+  state.balances = balances || null;
 
-  if (state.currentTrip.members && state.currentTrip.members.length > 0) {
+  if (state.currentTrip && state.currentTrip.members && state.currentTrip.members.length > 0) {
     state.currentUser = state.currentTrip.members[0];
   }
 
@@ -162,11 +449,30 @@ function setupEventListeners() {
     showToast(`Simulated receipt attached: ${chosen}`, 'info');
   });
 
-  // Export CSV
+  // Export CSV (Dual engine: works on GitHub Pages & Localhost)
   document.getElementById('btnExportCsv').addEventListener('click', () => {
     if (!state.currentTrip) return;
-    window.open(`${API_BASE}/trips/${state.currentTrip.id}/export?format=csv`, '_blank');
-    showToast('Exporting expense report as CSV...', 'info');
+    const trip = state.currentTrip;
+    let csv = `Date,Expense ID,Title,Category,Amount (${trip.currency}),Paid By,Splits,Policy Flags,Receipt\n`;
+    state.expenses.forEach(e => {
+      const payer = state.users.find(u => u.id === e.paidBy);
+      const payerName = payer ? payer.name : e.paidBy;
+      const splitsStr = (e.splits || []).map(s => {
+        const u = state.users.find(user => user.id === s.userId);
+        return `${u ? u.name : s.userId}:${s.amount}`;
+      }).join('; ');
+      const flagsStr = (e.policyFlags || []).map(f => f.code).join('; ');
+      csv += `"${e.date}","${e.id}","${(e.title || '').replace(/"/g, '""')}","${e.category}",${e.amount},"${payerName}","${splitsStr}","${flagsStr}","${e.receipt || 'None'}"\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${trip.title.replace(/[^a-zA-Z0-9]/g, '_')}_expenses.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported expense report as CSV!', 'info');
   });
 
   // Corporate Approvals
@@ -1006,14 +1312,11 @@ async function handleAddExpense(e) {
   };
 
   try {
-    const res = await fetch(`${API_BASE}/trips/${trip.id}/expenses`, {
+    const created = await api(`/trips/${trip.id}/expenses`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-
-    if (!res.ok) throw new Error('Failed to create expense');
-    const created = await res.json();
 
     document.getElementById('modalAddExpense').classList.add('hidden');
     document.getElementById('formAddExpense').reset();
@@ -1051,13 +1354,12 @@ async function handleNewTrip(e) {
   };
 
   try {
-    const res = await fetch(`${API_BASE}/trips`, {
+    const newTrip = await api('/trips', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
 
-    const newTrip = await res.json();
     document.getElementById('modalNewTrip').classList.add('hidden');
     document.getElementById('formNewTrip').reset();
 
@@ -1091,13 +1393,11 @@ async function handleSettlePayment(e) {
   };
 
   try {
-    const res = await fetch(`${API_BASE}/trips/${trip.id}/settle`, {
+    await api(`/trips/${trip.id}/settle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-
-    if (!res.ok) throw new Error('Failed to record settlement');
 
     document.getElementById('modalSettlePayment').classList.add('hidden');
     document.getElementById('formSettlePayment').reset();
@@ -1121,23 +1421,17 @@ async function handleAddMember(e) {
   };
 
   try {
-    const res = await fetch(`${API_BASE}/users`, {
+    const newUser = await api('/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
 
-    const newUser = await res.json();
-    state.users.push(newUser);
-
-    // Add to current trip's members list
-    if (!trip.members.includes(newUser.id)) {
-      trip.members.push(newUser.id);
-      await fetch(`${API_BASE}/trips/${trip.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ members: trip.members })
-      });
+    if (newUser) {
+      state.users.push(newUser);
+      if (!trip.members.includes(newUser.id)) {
+        trip.members.push(newUser.id);
+      }
     }
 
     document.getElementById('modalAddMember').classList.add('hidden');
@@ -1153,7 +1447,7 @@ async function handleAddMember(e) {
 window.handleDeleteExpense = async function(id) {
   if (!confirm('Are you sure you want to delete this expense?')) return;
   try {
-    await fetch(`${API_BASE}/expenses/${id}`, { method: 'DELETE' });
+    await api(`/expenses/${id}`, { method: 'DELETE' });
     showToast('Expense removed', 'info');
     await selectTrip(state.currentTrip.id);
   } catch (err) {
@@ -1166,13 +1460,12 @@ async function handleApprovalAction(action) {
   if (!trip) return;
 
   try {
-    const res = await fetch(`${API_BASE}/trips/${trip.id}/approve`, {
+    await api(`/trips/${trip.id}/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, approverId: 'u_sarah' })
     });
 
-    const result = await res.json();
     showToast(`Corporate report status updated to ${action}!`, action === 'APPROVE' ? 'success' : 'warning');
     await selectTrip(trip.id);
   } catch (err) {
