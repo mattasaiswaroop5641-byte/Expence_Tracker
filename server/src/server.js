@@ -19,6 +19,11 @@ app.use(express.static(publicDir));
 // Mount REST API
 app.use('/api', apiRoutes);
 
+// Dedicated Admin Page Route
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(publicDir, 'admin.html'));
+});
+
 // Fallback to index.html for SPA client-side routing
 app.use((req, res) => {
   if (req.path.startsWith('/api')) {

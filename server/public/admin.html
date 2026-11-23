@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Omnivance Ledger — Trip Admin Portal</title>
+  
+  <!-- Google Fonts: Plus Jakarta Sans -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+          },
+          colors: {
+            cream: {
+              50: '#FDFBF7',
+              100: '#FAF7F2',
+              200: '#F5EFEB',
+              300: '#EFE7DE',
+              400: '#E4DAD0',
+            },
+            roseaccent: {
+              50: '#FFF5F5',
+              100: '#FFF1F2',
+              200: '#FFE4E6',
+              300: '#FECDD3',
+              400: '#FDA4AF',
+              500: '#F43F5E',
+              600: '#E11D48',
+              700: '#BE123C',
+              800: '#9F1239',
+              900: '#881337',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-cream-100 min-h-screen text-stone-800 antialiased selection:bg-roseaccent-200 selection:text-roseaccent-900">
+
+  <!-- Admin Header Navigation -->
+  <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-cream-300">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between">
+      
+      <!-- Brand & Admin Title -->
+      <div class="flex items-center gap-3">
+        <a href="index.html" class="flex items-center gap-2.5 group">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-roseaccent-600 to-roseaccent-800 flex items-center justify-center text-white shadow-md shadow-roseaccent-500/20 group-hover:scale-105 transition">
+            <i data-lucide="shield" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="text-xl font-bold tracking-tight text-stone-900 group-hover:text-roseaccent-700 transition">Omnivance</span>
+              <span class="text-xs px-2 py-0.5 rounded-full font-bold bg-roseaccent-100 text-roseaccent-800 border border-roseaccent-200">Trip Admin</span>
+            </div>
+            <p class="text-[11px] text-stone-500 font-medium">Dedicated Trip & Expense Administration</p>
+          </div>
+        </a>
+      </div>
+
+      <!-- Center: Trip Context Dropdown -->
+      <div class="flex items-center gap-2">
+        <div class="relative">
+          <select id="adminTripSelector" class="appearance-none bg-cream-50 border border-cream-300 text-stone-800 text-sm font-semibold rounded-xl pl-3.5 pr-9 py-2 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 cursor-pointer shadow-sm max-w-[260px] sm:max-w-sm truncate">
+            <!-- Populated via JS -->
+          </select>
+          <i data-lucide="chevron-down" class="w-4 h-4 text-stone-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+        </div>
+      </div>
+
+      <!-- Right Action Bar: Share Admin Link & Back to User View -->
+      <div class="flex items-center gap-2.5">
+        <button id="btnHeaderShareAdmin" class="btn-rose-primary px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+          <i data-lucide="share-2" class="w-4 h-4"></i>
+          <span class="hidden sm:inline">Share Admin Link</span>
+        </button>
+
+        <a id="btnBackToUserView" href="index.html" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-700 hover:bg-cream-100 flex items-center gap-1.5 transition shadow-sm" title="Return to user ledger">
+          <i data-lucide="arrow-left" class="w-4 h-4 text-roseaccent-600"></i>
+          <span class="hidden md:inline">User View</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+    <!-- Section 1: Trip Admin Workspace (Active when a trip is selected) -->
+    <div id="tripAdminWorkspace">
+      
+      <!-- Trip Hero Banner -->
+      <div class="mb-6 p-6 sm:p-7 rounded-3xl bg-white border border-cream-300 shadow-sm relative overflow-hidden">
+        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 relative z-10">
+          <div>
+            <div class="flex items-center gap-2.5 mb-2 flex-wrap">
+              <span id="tripModeBadge" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold tag-mode-social">
+                Friends Trip
+              </span>
+              <span id="tripStatusPill" class="text-xs px-3 py-1 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                ACTIVE
+              </span>
+              <span class="text-xs text-stone-400 font-medium" id="tripIdDisplay">ID: ...</span>
+            </div>
+            <h1 id="tripTitleDisplay" class="text-2xl sm:text-3xl font-extrabold text-stone-900 tracking-tight">Loading Trip...</h1>
+            <p id="tripDestinationDisplay" class="text-sm text-stone-500 mt-1 flex items-center gap-1.5">
+              <i data-lucide="map-pin" class="w-4 h-4 text-roseaccent-600"></i>
+              <span>Destination</span>
+            </p>
+          </div>
+
+          <!-- Quick Metrics & Actions -->
+          <div class="flex items-center gap-3 flex-wrap">
+            <div class="p-3.5 rounded-2xl bg-cream-50 border border-cream-300 min-w-[130px]">
+              <div class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Total Spent</div>
+              <div id="tripTotalSpentDisplay" class="text-xl font-extrabold text-roseaccent-800 mt-0.5">₹0.00</div>
+            </div>
+            <div class="p-3.5 rounded-2xl bg-cream-50 border border-cream-300 min-w-[130px]">
+              <div class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Total Budget</div>
+              <div id="tripBudgetDisplay" class="text-xl font-extrabold text-stone-900 mt-0.5">₹0.00</div>
+            </div>
+
+            <!-- Quick Trip Toggle (End Trip / Reopen) -->
+            <button id="btnTripAdminToggleEnd" class="px-4 py-3 rounded-2xl text-xs font-bold bg-white border border-roseaccent-300 text-roseaccent-800 hover:bg-roseaccent-50 flex items-center gap-2 transition shadow-sm">
+              <i id="tripToggleEndIcon" data-lucide="lock" class="w-4 h-4 text-roseaccent-600"></i>
+              <span id="btnTripAdminToggleEndText">End & Conclude Trip</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Shareable Admin URL Ribbon -->
+      <div class="mb-8 p-5 rounded-3xl bg-gradient-to-r from-roseaccent-50 via-cream-50 to-roseaccent-50 border border-roseaccent-200 shadow-sm">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div class="flex items-start gap-3">
+            <div class="w-9 h-9 rounded-xl bg-roseaccent-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+              <i data-lucide="key" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h4 class="text-sm font-bold text-stone-900">Direct Admin Access URL</h4>
+              <p class="text-xs text-stone-600 mt-0.5">
+                Share this link with co-organizers or trip administrators to grant direct access to this management portal.
+              </p>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex items-center bg-white border border-cream-300 rounded-xl px-3 py-1.5 text-xs text-stone-700 shadow-inner max-w-sm truncate">
+              <span id="adminShareUrlDisplay" class="font-mono truncate select-all">Loading link...</span>
+            </div>
+            <button id="btnCopyAdminUrl" class="btn-rose-primary px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+              <span>Copy Admin Link</span>
+            </button>
+            <button id="btnCopyUserInviteUrl" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-700 hover:bg-cream-100 flex items-center gap-1.5 transition shadow-sm">
+              <i data-lucide="users" class="w-3.5 h-3.5 text-stone-500"></i>
+              <span>Copy Member Link</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Admin Tab Navigation -->
+      <div class="flex items-center gap-2 border-b border-cream-300 mb-6 overflow-x-auto pb-1">
+        <button class="admin-tab-btn active px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 bg-white text-stone-900 shadow-sm" data-tab="settings">
+          <i data-lucide="settings" class="w-4 h-4 text-roseaccent-600"></i>
+          <span>Trip Settings & Budget</span>
+        </button>
+        <button class="admin-tab-btn px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 text-stone-600 hover:bg-white" data-tab="members">
+          <i data-lucide="users" class="w-4 h-4 text-roseaccent-600"></i>
+          <span>Members & Roles</span>
+          <span id="tabBadgeMemberCount" class="text-[10px] px-2 py-0.5 rounded-full bg-cream-200 text-stone-700 font-bold">0</span>
+        </button>
+        <button class="admin-tab-btn px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 text-stone-600 hover:bg-white" data-tab="expenses">
+          <i data-lucide="receipt" class="w-4 h-4 text-roseaccent-600"></i>
+          <span>Expenses Oversight</span>
+          <span id="tabBadgeExpenseCount" class="text-[10px] px-2 py-0.5 rounded-full bg-cream-200 text-stone-700 font-bold">0</span>
+        </button>
+        <button id="tabBtnPolicy" class="admin-tab-btn px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 text-stone-600 hover:bg-white" data-tab="policy">
+          <i data-lucide="shield-check" class="w-4 h-4 text-roseaccent-600"></i>
+          <span>Corporate & Policies</span>
+        </button>
+        <button class="admin-tab-btn px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 text-stone-600 hover:bg-white" data-tab="audit">
+          <i data-lucide="file-text" class="w-4 h-4 text-roseaccent-600"></i>
+          <span>Trip Audit Trail</span>
+        </button>
+      </div>
+
+      <!-- Tab Contents -->
+
+      <!-- TAB 1: Trip Settings & Budget -->
+      <div id="admin-tab-settings" class="admin-tab-content">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div class="lg:col-span-2 card-cream rounded-3xl p-6 sm:p-7 border border-cream-300">
+            <h3 class="text-base font-bold text-stone-900 mb-1">Edit Trip Parameters</h3>
+            <p class="text-xs text-stone-500 mb-5">Update trip title, destination, operational mode, and overall budget.</p>
+
+            <form id="formEditTripDetails" class="space-y-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs font-bold text-stone-700 mb-1">Trip Title</label>
+                  <input type="text" id="editTripTitle" required class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3.5 py-2.5 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 font-semibold" />
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-stone-700 mb-1">Destination</label>
+                  <input type="text" id="editTripDestination" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3.5 py-2.5 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500" />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs font-bold text-stone-700 mb-1">Trip Mode</label>
+                  <select id="editTripMode" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3.5 py-2.5 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 font-semibold">
+                    <option value="SOCIAL">Social (Friends & Casual Outings)</option>
+                    <option value="CORPORATE">Corporate Travel (Strict Policies)</option>
+                    <option value="HYBRID">Hybrid (Team Offsite / Workation)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-stone-700 mb-1">Total Trip Budget (₹)</label>
+                  <input type="number" id="editTripBudget" min="0" step="100" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3.5 py-2.5 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 font-semibold" />
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-stone-700 mb-1">Description / Notes</label>
+                <textarea id="editTripDescription" rows="2" class="w-full bg-cream-50 border border-cream-300 rounded-xl p-3 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 resize-none"></textarea>
+              </div>
+
+              <div class="pt-3 flex items-center justify-end gap-3">
+                <button type="submit" class="btn-rose-primary px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm">
+                  <i data-lucide="check" class="w-4 h-4"></i>
+                  <span>Save Trip Changes</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Danger Zone Card -->
+          <div class="card-cream rounded-3xl p-6 border border-roseaccent-200 bg-roseaccent-50/30 flex flex-col justify-between">
+            <div>
+              <div class="flex items-center gap-2 text-roseaccent-800 font-bold text-sm mb-2">
+                <i data-lucide="alert-triangle" class="w-4 h-4 text-roseaccent-600"></i>
+                <span>Administrative Actions</span>
+              </div>
+              <p class="text-xs text-stone-600 leading-relaxed mb-4">
+                As a Trip Admin, you have authority to conclude and lock this trip's financial records, or permanently purge this trip and all recorded expenses.
+              </p>
+
+              <div class="p-3 rounded-2xl bg-white border border-roseaccent-200 mb-4">
+                <div class="text-[11px] font-bold text-stone-700 mb-1">Trip Lifecycle Lock</div>
+                <p class="text-[11px] text-stone-500 leading-normal">
+                  Ending a trip locks all expense submissions and seals balances for final payout.
+                </p>
+                <button id="btnSideToggleEndTrip" class="mt-2.5 w-full py-2 rounded-xl text-xs font-bold border border-roseaccent-300 text-roseaccent-800 bg-white hover:bg-roseaccent-50 transition">
+                  Toggle Status
+                </button>
+              </div>
+            </div>
+
+            <div class="pt-4 border-t border-roseaccent-200">
+              <button id="btnAdminDeleteTrip" class="w-full py-2.5 rounded-xl text-xs font-bold bg-white border border-red-300 text-red-700 hover:bg-red-50 transition flex items-center justify-center gap-1.5 shadow-xs">
+                <i data-lucide="trash-2" class="w-4 h-4 text-red-600"></i>
+                <span>Permanently Delete Trip</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: Members & Roles Management -->
+      <div id="admin-tab-members" class="admin-tab-content hidden">
+        <div class="card-cream rounded-3xl p-6 border border-cream-300">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+            <div>
+              <h3 class="text-base font-bold text-stone-900">Trip Members & Role Governance</h3>
+              <p class="text-xs text-stone-500 mt-0.5">Manage enrolled members, assign Admin rights, and access verified contacts.</p>
+            </div>
+            <button id="btnOpenAddMemberModal" class="btn-rose-primary px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm">
+              <i data-lucide="user-plus" class="w-4 h-4"></i>
+              <span>Add Member to Trip</span>
+            </button>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="border-b border-cream-200 text-[11px] font-bold text-stone-400 uppercase tracking-wider">
+                  <th class="py-3 px-3">Member</th>
+                  <th class="py-3 px-3">Trip Role</th>
+                  <th class="py-3 px-3">Contact Shortcuts</th>
+                  <th class="py-3 px-3">UPI ID</th>
+                  <th class="py-3 px-3 text-right">Admin Actions</th>
+                </tr>
+              </thead>
+              <tbody id="tripMembersTableBody" class="divide-y divide-cream-100 text-xs text-stone-700">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: Expenses Oversight & Moderation -->
+      <div id="admin-tab-expenses" class="admin-tab-content hidden">
+        <div class="card-cream rounded-3xl p-6 border border-cream-300">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+            <div>
+              <h3 class="text-base font-bold text-stone-900">Recorded Expenses Moderation</h3>
+              <p class="text-xs text-stone-500 mt-0.5">Audit expenses, inspect receipts, verify live GPS pins, and moderate invalid entries.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="text" id="expenseSearchInput" placeholder="Search by title or member..." class="bg-cream-50 border border-cream-300 rounded-xl px-3.5 py-2 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 w-48 sm:w-64" />
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="border-b border-cream-200 text-[11px] font-bold text-stone-400 uppercase tracking-wider">
+                  <th class="py-3 px-3">Date</th>
+                  <th class="py-3 px-3">Title & Category</th>
+                  <th class="py-3 px-3">Amount</th>
+                  <th class="py-3 px-3">Paid By</th>
+                  <th class="py-3 px-3">Receipt</th>
+                  <th class="py-3 px-3">GPS Location</th>
+                  <th class="py-3 px-3">Policy Audit</th>
+                  <th class="py-3 px-3 text-right">Moderate</th>
+                </tr>
+              </thead>
+              <tbody id="tripExpensesTableBody" class="divide-y divide-cream-100 text-xs text-stone-700">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: Corporate & Policies -->
+      <div id="admin-tab-policy" class="admin-tab-content hidden">
+        <div class="card-cream rounded-3xl p-6 sm:p-7 border border-cream-300">
+          <h3 class="text-base font-bold text-stone-900 mb-1">Corporate Compliance & Per Diem Limits</h3>
+          <p class="text-xs text-stone-500 mb-6">Configure spending rules, approval workflows, and threshold limits for this trip.</p>
+
+          <form id="formCorporatePolicy" class="space-y-5 max-w-2xl">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-bold text-stone-700 mb-1">Cost Center Code</label>
+                <input type="text" id="corpCostCenter" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3.5 py-2.5 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 font-mono" />
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-stone-700 mb-1">Daily Per Diem Limit (₹)</label>
+                <input type="number" id="corpPerDiemLimit" min="0" step="100" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3.5 py-2.5 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 font-semibold" />
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-stone-700 mb-1">Mandatory Receipt Threshold (₹)</label>
+              <input type="number" id="corpReceiptThreshold" min="0" step="50" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3.5 py-2.5 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 font-semibold" />
+              <p class="text-[11px] text-stone-500 mt-1">Expenses above this amount without a receipt attachment will be flagged as policy violations.</p>
+            </div>
+
+            <!-- Corporate Approvals Box -->
+            <div class="p-4 rounded-2xl bg-cream-50 border border-cream-300">
+              <div class="flex items-center justify-between mb-3">
+                <span class="text-xs font-bold text-stone-800">Corporate Expense Report Status:</span>
+                <span id="corpApprovalStatusBadge" class="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-800 border border-amber-300">DRAFT</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <button type="button" id="btnAdminApproveReport" class="btn-rose-primary px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+                  <i data-lucide="check-check" class="w-4 h-4"></i>
+                  <span>Approve Entire Expense Report</span>
+                </button>
+                <button type="button" id="btnAdminRejectReport" class="px-4 py-2 rounded-xl text-xs font-semibold bg-white border border-roseaccent-300 text-roseaccent-800 hover:bg-roseaccent-50 transition">
+                  <span>Reject & Require Corrections</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="pt-3">
+              <button type="submit" class="btn-rose-primary px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm">
+                <i data-lucide="save" class="w-4 h-4"></i>
+                <span>Save Corporate Settings</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- TAB 5: Trip Audit Trail -->
+      <div id="admin-tab-audit" class="admin-tab-content hidden">
+        <div class="card-cream rounded-3xl p-6 border border-cream-300">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-base font-bold text-stone-900">Trip Audit Trail & Change Log</h3>
+              <p class="text-xs text-stone-500">Immutable record of status changes, member enrollment, and expense updates.</p>
+            </div>
+            <span class="text-xs px-2.5 py-0.5 rounded-full bg-cream-200 text-stone-700 font-bold">Trip-Scoped</span>
+          </div>
+
+          <div id="tripAuditLogsContainer" class="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+            <!-- Populated via JS -->
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Section 2: System-Wide Platform Overview (Shown when "All Trips System Overview" is selected) -->
+    <div id="systemOverviewWorkspace" class="hidden">
+      <!-- System Stats Ribbon -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+        <div class="card-cream p-5 rounded-3xl">
+          <div class="text-[11px] font-bold text-stone-400 uppercase tracking-wider">Total Managed Trips</div>
+          <div id="sysTotalTrips" class="text-2xl font-extrabold text-stone-900 mt-1">0</div>
+        </div>
+        <div class="card-cream p-5 rounded-3xl">
+          <div class="text-[11px] font-bold text-stone-400 uppercase tracking-wider">Active Outings</div>
+          <div id="sysActiveTrips" class="text-2xl font-extrabold text-emerald-600 mt-1">0</div>
+        </div>
+        <div class="card-cream p-5 rounded-3xl">
+          <div class="text-[11px] font-bold text-stone-400 uppercase tracking-wider">Concluded Trips</div>
+          <div id="sysEndedTrips" class="text-2xl font-extrabold text-amber-600 mt-1">0</div>
+        </div>
+        <div class="card-cream p-5 rounded-3xl">
+          <div class="text-[11px] font-bold text-stone-400 uppercase tracking-wider">Total Ledger Volume</div>
+          <div id="sysTotalVolume" class="text-2xl font-extrabold text-roseaccent-800 mt-1">₹0.00</div>
+        </div>
+      </div>
+
+      <!-- All Trips Oversight Table -->
+      <div class="card-cream rounded-3xl p-6 border border-cream-300 mb-8">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-base font-bold text-stone-900">All Trips Oversight</h3>
+          <span class="text-xs text-stone-500 font-medium">Global trip lifecycle governance</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-cream-200 text-[11px] font-bold text-stone-400 uppercase tracking-wider">
+                <th class="py-3 px-3">Trip</th>
+                <th class="py-3 px-3">Mode</th>
+                <th class="py-3 px-3">Status</th>
+                <th class="py-3 px-3">Members</th>
+                <th class="py-3 px-3">Budget</th>
+                <th class="py-3 px-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="allTripsTableBody" class="divide-y divide-cream-100 text-xs text-stone-700">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Global User Directory -->
+      <div class="card-cream rounded-3xl p-6 border border-cream-300 mb-8">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-base font-bold text-stone-900">Platform User Directory & Role Assignment</h3>
+          <button id="btnCreateGlobalUser" class="btn-rose-primary px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+            <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+            <span>Add User</span>
+          </button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-cream-200 text-[11px] font-bold text-stone-400 uppercase tracking-wider">
+                <th class="py-3 px-3">User</th>
+                <th class="py-3 px-3">Email & Phone</th>
+                <th class="py-3 px-3">UPI ID</th>
+                <th class="py-3 px-3">Global Role</th>
+                <th class="py-3 px-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="globalUsersTableBody" class="divide-y divide-cream-100 text-xs text-stone-700">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Backup and Restore -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="card-cream rounded-3xl p-6 border border-cream-300">
+          <h3 class="text-base font-bold text-stone-900 mb-1">Export Database Backup</h3>
+          <p class="text-xs text-stone-500 mb-4">Download a full JSON snapshot of all trips, users, and audit records.</p>
+          <button id="btnSysExportBackup" class="btn-rose-primary px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-sm">
+            <i data-lucide="download" class="w-4 h-4"></i>
+            <span>Download JSON Backup</span>
+          </button>
+        </div>
+
+        <div class="card-cream rounded-3xl p-6 border border-cream-300">
+          <h3 class="text-base font-bold text-stone-900 mb-1">Restore Database Snapshot</h3>
+          <p class="text-xs text-stone-500 mb-4">Restore or migrate state from a valid JSON backup archive.</p>
+          <input type="file" id="sysRestoreFileInput" accept=".json" class="hidden" />
+          <button id="btnSysRestoreBackup" class="px-4 py-2.5 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-700 hover:bg-cream-100 flex items-center gap-2 transition shadow-sm">
+            <i data-lucide="upload" class="w-4 h-4 text-roseaccent-600"></i>
+            <span>Select JSON File to Restore</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Modal: Add Member to Trip -->
+  <div id="modalAddMemberToTrip" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-cream-300 animate-in fade-in zoom-in-95 duration-200">
+      <div class="flex items-center justify-between pb-4 border-b border-cream-200">
+        <h3 class="text-base font-bold text-stone-900 flex items-center gap-2">
+          <i data-lucide="user-plus" class="w-4 h-4 text-roseaccent-600"></i>
+          <span>Add Member to Trip</span>
+        </h3>
+        <button class="close-admin-modal text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="formAddMemberToTrip" class="mt-4 space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-stone-700 mb-1">Select Existing System User</label>
+          <select id="selectExistingUser" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3 py-2 text-xs text-stone-800 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30">
+            <option value="">-- Choose from existing users or create new below --</option>
+          </select>
+        </div>
+
+        <div class="relative flex py-1 items-center">
+          <div class="flex-grow border-t border-cream-300"></div>
+          <span class="flex-shrink mx-3 text-[10px] uppercase font-bold text-stone-400">Or Enroll New User</span>
+          <div class="flex-grow border-t border-cream-300"></div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-stone-700 mb-1">Full Name</label>
+          <input type="text" id="newMemberName" placeholder="e.g. Rachel Green" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-stone-700 mb-1">Phone Number</label>
+            <input type="tel" id="newMemberPhone" placeholder="+91 98765 43210" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30" />
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-stone-700 mb-1">UPI ID</label>
+            <input type="text" id="newMemberUpi" placeholder="name@okaxis" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3 py-2 text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30" />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-stone-700 mb-1">Assigned Role in Trip</label>
+          <select id="newMemberRole" class="w-full bg-cream-50 border border-cream-300 rounded-xl px-3 py-2 text-xs text-stone-800 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 font-semibold">
+            <option value="MEMBER">Trip Member</option>
+            <option value="ADMIN">Trip Administrator</option>
+            <option value="ORGANIZER">Trip Organizer</option>
+          </select>
+        </div>
+
+        <div class="pt-3 flex items-center justify-end gap-3">
+          <button type="button" class="close-admin-modal px-4 py-2 rounded-xl text-xs font-semibold text-stone-600 hover:bg-cream-100">Cancel</button>
+          <button type="submit" class="btn-rose-primary px-5 py-2.5 rounded-xl text-xs font-semibold shadow-sm">Add Member</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Receipt Lightbox Preview -->
+  <div id="modalAdminReceiptViewer" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop hidden">
+    <div class="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-cream-300 animate-in fade-in zoom-in-95 duration-200">
+      <div class="flex items-center justify-between pb-4 border-b border-cream-200">
+        <div class="flex items-center gap-2">
+          <i data-lucide="receipt" class="w-5 h-5 text-roseaccent-600"></i>
+          <h3 id="adminReceiptTitle" class="text-sm font-bold text-stone-900">Receipt Verification</h3>
+        </div>
+        <button class="close-admin-modal text-stone-400 hover:text-stone-700">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div class="mt-4 flex items-center justify-center bg-cream-50 rounded-2xl p-4 min-h-[280px] max-h-[65vh] overflow-auto">
+        <img id="adminReceiptImage" src="" alt="Receipt Preview" class="max-h-[60vh] max-w-full rounded-xl object-contain shadow-xs hidden" />
+        <div id="adminReceiptFallback" class="text-center p-8 hidden">
+          <i data-lucide="file-text" class="w-12 h-12 text-stone-400 mx-auto mb-2"></i>
+          <div id="adminReceiptFileName" class="text-xs font-bold text-stone-700">document.pdf</div>
+          <p class="text-[11px] text-stone-500 mt-1">Non-image receipt file.</p>
+          <a id="adminReceiptDownloadLink" href="#" download class="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-roseaccent-600 text-white hover:bg-roseaccent-700">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            <span>Download Receipt</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2.5 pointer-events-none"></div>
+
+  <!-- Admin Application Logic Script -->
+  <script src="admin.js"></script>
+</body>
+</html>

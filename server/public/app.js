@@ -33,7 +33,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadInitialData() {
   try {
     await Promise.all([fetchUsers(), fetchTrips()]);
-    if (state.trips.length > 0) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramTripId = urlParams.get('tripId');
+    if (paramTripId && state.trips.some(t => t.id === paramTripId)) {
+      await selectTrip(paramTripId);
+    } else if (urlParams.get('view') === 'home') {
+      await renderHomeView();
+    } else if (state.trips.length > 0) {
       await selectTrip(state.trips[0].id);
     } else {
       renderEmptyState();
@@ -346,6 +352,18 @@ async function api(path, options = {}) {
       localDb.save(db);
       localDb.addAuditLog('TRIP_STATUS_CHANGE', `Trip "${trip.title}" status changed to ${trip.status}`);
       return trip;
+    }
+    return null;
+  }
+
+  if (path.startsWith('/trips/') && method === 'PUT') {
+    const tripId = path.split('/')[2];
+    const idx = db.trips.findIndex(t => t.id === tripId);
+    if (idx !== -1) {
+      db.trips[idx] = { ...db.trips[idx], ...body };
+      localDb.save(db);
+      localDb.addAuditLog('TRIP_UPDATED', `Trip "${db.trips[idx].title}" details updated by Admin`);
+      return db.trips[idx];
     }
     return null;
   }
@@ -802,6 +820,9 @@ async function selectTrip(tripId) {
 
   renderTripSelector();
 
+  const navAdminBtn = document.getElementById('navAdminPortalBtn');
+  if (navAdminBtn) navAdminBtn.href = `admin.html?tripId=${encodeURIComponent(tripId)}`;
+
   try {
     const [expenses, balances] = await Promise.all([
       api(`/trips/${tripId}/expenses`),
@@ -841,13 +862,48 @@ function setupEventListeners() {
 
   const btnHomeGoAdmin = document.getElementById('btnHomeGoAdmin');
   if (btnHomeGoAdmin) {
-    btnHomeGoAdmin.addEventListener('click', async () => {
-      if (state.trips.length > 0) {
-        await selectTrip(state.trips[0].id);
-        switchTab('admin');
-      } else {
-        showToast('Please create a trip first to access administration and policies.', 'info');
-      }
+    btnHomeGoAdmin.addEventListener('click', () => {
+      window.location.href = 'admin.html';
+    });
+  }
+
+  // Share Admin Link button in Trip Dashboard
+  const btnShareAdmin = document.getElementById('btnShareTripAdminLink');
+  if (btnShareAdmin) {
+    btnShareAdmin.addEventListener('click', () => {
+      if (!state.currentTrip) return;
+      const tripId = state.currentTrip.id;
+      const loc = window.location;
+      const adminUrl = `${loc.origin}${loc.pathname.replace(/index\.html$/, '')}admin.html?tripId=${encodeURIComponent(tripId)}`;
+      const memberUrl = `${loc.origin}${loc.pathname.replace(/index\.html$/, '')}index.html?tripId=${encodeURIComponent(tripId)}`;
+
+      const inputAdmin = document.getElementById('shareAdminInputUrl');
+      const inputMember = document.getElementById('shareMemberInputUrl');
+      const directLink = document.getElementById('btnModalOpenAdminDirect');
+
+      if (inputAdmin) inputAdmin.value = adminUrl;
+      if (inputMember) inputMember.value = memberUrl;
+      if (directLink) directLink.href = adminUrl;
+
+      // Automatically copy to clipboard
+      window.copyToClipboard(adminUrl, 'Trip Admin Link');
+      openModal('modalShareAdminLink');
+    });
+  }
+
+  const btnModalCopyAdmin = document.getElementById('btnModalCopyAdminUrl');
+  if (btnModalCopyAdmin) {
+    btnModalCopyAdmin.addEventListener('click', () => {
+      const url = document.getElementById('shareAdminInputUrl').value;
+      window.copyToClipboard(url, 'Trip Admin Link');
+    });
+  }
+
+  const btnModalCopyMember = document.getElementById('btnModalCopyMemberUrl');
+  if (btnModalCopyMember) {
+    btnModalCopyMember.addEventListener('click', () => {
+      const url = document.getElementById('shareMemberInputUrl').value;
+      window.copyToClipboard(url, 'Member Invite Link');
     });
   }
 
