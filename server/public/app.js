@@ -46,6 +46,8 @@ async function loadInitialData() {
 
 function renderEmptyState() {
   state.currentTrip = null;
+  const homeView = document.getElementById('homeView');
+  if (homeView) homeView.classList.add('hidden');
   document.getElementById('noTripsContainer').classList.remove('hidden');
   document.getElementById('activeTripDashboard').classList.add('hidden');
   document.getElementById('tripSelector').innerHTML = `<option disabled selected>No Trips Yet</option>`;
@@ -524,13 +526,281 @@ async function fetchTrips() {
   renderTripSelector();
 }
 
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+async function renderHomeView() {
+  state.currentTrip = null;
+
+  const dashboard = document.getElementById('activeTripDashboard');
+  const noTrips = document.getElementById('noTripsContainer');
+  const homeView = document.getElementById('homeView');
+
+  if (dashboard) dashboard.classList.add('hidden');
+  if (noTrips) noTrips.classList.add('hidden');
+  if (homeView) homeView.classList.remove('hidden');
+
+  renderTripSelector();
+
+  let allExpenses = [];
+  try {
+    allExpenses = (await api('/expenses')) || [];
+  } catch (e) {
+    allExpenses = state.expenses || [];
+  }
+
+  const activeTrips = state.trips.filter(t => t.status !== 'ENDED');
+  const endedTrips = state.trips.filter(t => t.status === 'ENDED');
+  const totalSpend = allExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+  const uniqueMembers = new Set();
+  state.trips.forEach(t => (t.members || []).forEach(m => uniqueMembers.add(m)));
+
+  // Populate Quick Metrics Ribbon
+  const metricActive = document.getElementById('homeMetricActiveTrips');
+  if (metricActive) metricActive.textContent = activeTrips.length;
+
+  const metricEnded = document.getElementById('homeMetricEndedTrips');
+  if (metricEnded) metricEnded.textContent = endedTrips.length;
+
+  const metricMembers = document.getElementById('homeMetricTotalMembers');
+  if (metricMembers) metricMembers.textContent = uniqueMembers.size || state.users.length;
+
+  const metricSpend = document.getElementById('homeMetricTotalSpend');
+  if (metricSpend) {
+    metricSpend.textContent = '₹' + totalSpend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  const badgeActive = document.getElementById('homeActiveTripsCountBadge');
+  if (badgeActive) badgeActive.textContent = `${activeTrips.length} Active`;
+
+  const badgeEnded = document.getElementById('homeEndedTripsCountBadge');
+  if (badgeEnded) badgeEnded.textContent = `${endedTrips.length} Concluded`;
+
+  // Map expenses to trips
+  const tripSpendMap = {};
+  allExpenses.forEach(e => {
+    tripSpendMap[e.tripId] = (tripSpendMap[e.tripId] || 0) + (Number(e.amount) || 0);
+  });
+
+  // Render Active Trips Grid
+  const activeGrid = document.getElementById('homeActiveTripsGrid');
+  if (activeGrid) {
+    if (activeTrips.length === 0) {
+      activeGrid.innerHTML = `
+        <div class="col-span-full card-cream p-8 text-center rounded-3xl border border-dashed border-cream-400">
+          <div class="w-12 h-12 rounded-2xl bg-cream-200 text-stone-500 mx-auto flex items-center justify-center mb-3">
+            <i data-lucide="compass" class="w-6 h-6"></i>
+          </div>
+          <h4 class="text-stone-900 font-bold text-base">No active trips currently</h4>
+          <p class="text-xs text-stone-500 mt-1 max-w-sm mx-auto">Create a brand new trip or reopen a past concluded trip to start logging split expenses.</p>
+          <button onclick="document.getElementById('btnHomeCreateTrip').click()" class="mt-4 btn-rose-primary px-5 py-2.5 rounded-xl text-xs font-semibold inline-flex items-center gap-2 shadow-sm">
+            <i data-lucide="plus-circle" class="w-4 h-4"></i>
+            <span>Create New Trip</span>
+          </button>
+        </div>
+      `;
+    } else {
+      activeGrid.innerHTML = activeTrips.map(t => {
+        const spent = tripSpendMap[t.id] || 0;
+        const budget = Number(t.budget) || 0;
+        const percent = budget > 0 ? Math.min(Math.round((spent / budget) * 100), 100) : 0;
+        const isOver = budget > 0 && spent > budget;
+        const tagClass = t.mode === 'CORPORATE' ? 'tag-mode-corporate' : (t.mode === 'HYBRID' ? 'tag-mode-hybrid' : 'tag-mode-social');
+        const modeLabel = t.mode === 'CORPORATE' ? 'Corporate' : (t.mode === 'HYBRID' ? 'Hybrid' : 'Friends');
+        const membersList = (t.members || []).map(mid => state.users.find(u => u.id === mid) || { id: mid, name: mid, avatar: 'https://api.dicebear.com/7.x/notionists/svg?seed=' + mid });
+
+        return `
+          <div class="card-cream rounded-3xl p-5 border border-cream-300 hover:border-roseaccent-300 hover:shadow-lg transition-all duration-200 flex flex-col justify-between group">
+            <div>
+              <div class="flex items-center justify-between gap-2 mb-3">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-semibold ${tagClass}">
+                  <span class="w-1.5 h-1.5 rounded-full ${t.mode === 'CORPORATE' ? 'bg-roseaccent-600' : (t.mode === 'HYBRID' ? 'bg-amber-600' : 'bg-emerald-600')}"></span>
+                  ${modeLabel}
+                </span>
+                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  ACTIVE
+                </span>
+              </div>
+
+              <h3 class="text-lg font-bold text-stone-900 group-hover:text-roseaccent-700 transition line-clamp-1">${escapeHtml(t.title)}</h3>
+              <p class="text-xs text-stone-500 mt-1 flex items-center gap-1">
+                <i data-lucide="map-pin" class="w-3.5 h-3.5 text-stone-400"></i>
+                <span>${t.destination ? escapeHtml(t.destination) : 'No destination'}</span>
+              </p>
+
+              <!-- Budget Progress -->
+              <div class="mt-4 p-3.5 rounded-2xl bg-white/70 border border-cream-200">
+                <div class="flex items-center justify-between text-xs mb-1.5">
+                  <span class="text-stone-500 font-medium">Spent vs Budget</span>
+                  <span class="font-bold ${isOver ? 'text-roseaccent-700' : 'text-stone-800'}">
+                    ₹${spent.toLocaleString()} / ₹${budget.toLocaleString()}
+                  </span>
+                </div>
+                <div class="w-full h-2 rounded-full bg-cream-200 overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-300 ${isOver ? 'bg-roseaccent-600' : 'bg-emerald-500'}" style="width: ${percent}%;"></div>
+                </div>
+                ${isOver ? `<div class="mt-1.5 text-[10px] font-bold text-roseaccent-700 flex items-center gap-1"><i data-lucide="alert-triangle" class="w-3 h-3"></i> Budget exceeded by ₹${(spent - budget).toLocaleString()}</div>` : ''}
+              </div>
+
+              <!-- Members Stack -->
+              <div class="mt-4 flex items-center justify-between">
+                <div class="flex items-center -space-x-2">
+                  ${membersList.slice(0, 4).map(m => `
+                    <img src="${m.avatar}" alt="${escapeHtml(m.name)}" title="${escapeHtml(m.name)}" class="w-7 h-7 rounded-full border-2 border-white bg-cream-200 shadow-xs object-cover" />
+                  `).join('')}
+                  ${membersList.length > 4 ? `
+                    <div class="w-7 h-7 rounded-full border-2 border-white bg-cream-300 text-stone-700 text-[10px] font-bold flex items-center justify-center shadow-xs">
+                      +${membersList.length - 4}
+                    </div>
+                  ` : ''}
+                </div>
+                <span class="text-xs font-semibold text-stone-500">${membersList.length} members</span>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="mt-5 pt-4 border-t border-cream-200/80 flex items-center gap-2">
+              <button onclick="window.selectTrip('${t.id}')" class="flex-1 btn-rose-primary py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 shadow-sm">
+                <span>Open Dashboard</span>
+                <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+              </button>
+              <button onclick="window.promptEndTrip('${t.id}')" class="px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-700 hover:text-stone-900 hover:bg-cream-100 transition shadow-sm" title="End and Conclude Trip">
+                <span>End</span>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // Render Past & Concluded Trips Grid
+  const endedGrid = document.getElementById('homeEndedTripsGrid');
+  if (endedGrid) {
+    if (endedTrips.length === 0) {
+      endedGrid.innerHTML = `
+        <div class="col-span-full card-cream p-6 text-center rounded-3xl border border-dashed border-cream-300">
+          <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-700 mx-auto flex items-center justify-center mb-2">
+            <i data-lucide="check-circle" class="w-5 h-5"></i>
+          </div>
+          <h4 class="text-stone-800 font-bold text-sm">No concluded trips yet</h4>
+          <p class="text-xs text-stone-500 mt-1">When an outing concludes, clicking End Trip locks the ledger and places the summary here.</p>
+        </div>
+      `;
+    } else {
+      endedGrid.innerHTML = endedTrips.map(t => {
+        const spent = tripSpendMap[t.id] || 0;
+        const tagClass = t.mode === 'CORPORATE' ? 'tag-mode-corporate' : (t.mode === 'HYBRID' ? 'tag-mode-hybrid' : 'tag-mode-social');
+        const modeLabel = t.mode === 'CORPORATE' ? 'Corporate' : (t.mode === 'HYBRID' ? 'Hybrid' : 'Friends');
+        const membersList = (t.members || []).map(mid => state.users.find(u => u.id === mid) || { id: mid, name: mid, avatar: 'https://api.dicebear.com/7.x/notionists/svg?seed=' + mid });
+
+        return `
+          <div class="card-cream rounded-3xl p-5 border border-cream-300 opacity-95 hover:opacity-100 hover:border-amber-400 hover:shadow-lg transition-all duration-200 flex flex-col justify-between group">
+            <div>
+              <div class="flex items-center justify-between gap-2 mb-3">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-semibold ${tagClass}">
+                  <span class="w-1.5 h-1.5 rounded-full ${t.mode === 'CORPORATE' ? 'bg-roseaccent-600' : (t.mode === 'HYBRID' ? 'bg-amber-600' : 'bg-emerald-600')}"></span>
+                  ${modeLabel}
+                </span>
+                <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                  <i data-lucide="lock" class="w-3 h-3 text-amber-700"></i>
+                  CONCLUDED
+                </span>
+              </div>
+
+              <h3 class="text-lg font-bold text-stone-900 group-hover:text-amber-900 transition line-clamp-1">${escapeHtml(t.title)}</h3>
+              <p class="text-xs text-stone-500 mt-1 flex items-center gap-1">
+                <i data-lucide="map-pin" class="w-3.5 h-3.5 text-stone-400"></i>
+                <span>${t.destination ? escapeHtml(t.destination) : 'Archived'}</span>
+              </p>
+
+              <div class="mt-4 p-3 rounded-2xl bg-amber-50/60 border border-amber-200 flex items-center justify-between">
+                <span class="text-xs text-amber-900 font-medium">Final Settled Spend:</span>
+                <span class="text-sm font-extrabold text-amber-900">₹${spent.toLocaleString()}</span>
+              </div>
+
+              <!-- Members Stack -->
+              <div class="mt-4 flex items-center justify-between">
+                <div class="flex items-center -space-x-2">
+                  ${membersList.slice(0, 4).map(m => `
+                    <img src="${m.avatar}" alt="${escapeHtml(m.name)}" title="${escapeHtml(m.name)}" class="w-7 h-7 rounded-full border-2 border-white bg-cream-200 shadow-xs object-cover" />
+                  `).join('')}
+                  ${membersList.length > 4 ? `
+                    <div class="w-7 h-7 rounded-full border-2 border-white bg-cream-300 text-stone-700 text-[10px] font-bold flex items-center justify-center shadow-xs">
+                      +${membersList.length - 4}
+                    </div>
+                  ` : ''}
+                </div>
+                <span class="text-xs font-semibold text-stone-500">${membersList.length} members</span>
+              </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="mt-5 pt-4 border-t border-cream-200/80 flex items-center gap-2">
+              <button onclick="window.selectTrip('${t.id}')" class="flex-1 px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-800 hover:bg-cream-100 transition shadow-sm flex items-center justify-center gap-1.5">
+                <i data-lucide="file-text" class="w-3.5 h-3.5 text-stone-600"></i>
+                <span>View Summary</span>
+              </button>
+              <button onclick="window.handleToggleEndTrip('${t.id}')" class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-emerald-50 border border-emerald-300 text-emerald-800 hover:bg-emerald-100 transition shadow-sm flex items-center gap-1">
+                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                <span>Reopen</span>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+window.promptEndTrip = async function(tripId) {
+  const trip = state.trips.find(t => t.id === tripId);
+  if (!trip) return;
+  state.currentTrip = trip;
+  document.getElementById('endTripModalTitle').textContent = trip.title;
+  let total = 0;
+  try {
+    const balances = await api(`/trips/${tripId}/balances`);
+    if (balances && balances.totalTripSpent) total = balances.totalTripSpent;
+  } catch (e) {
+    // fallback
+  }
+  const sym = trip.currencySymbol || '₹';
+  document.getElementById('endTripModalTotalSpend').textContent = `${sym}${total.toLocaleString()}`;
+  document.getElementById('endTripModalMembersCount').textContent = `${(trip.members || []).length} members`;
+  openModal('modalEndTripSummary');
+};
+
+window.renderHomeView = renderHomeView;
+
 async function selectTrip(tripId) {
+  if (tripId === '__home__') {
+    await renderHomeView();
+    return;
+  }
+
   const trip = state.trips.find(t => t.id === tripId);
   if (!trip) return;
 
   state.currentTrip = trip;
+  const homeView = document.getElementById('homeView');
+  if (homeView) homeView.classList.add('hidden');
   document.getElementById('noTripsContainer').classList.add('hidden');
   document.getElementById('activeTripDashboard').classList.remove('hidden');
+
+  renderTripSelector();
 
   try {
     const [expenses, balances] = await Promise.all([
@@ -555,6 +825,31 @@ function setupEventListeners() {
   document.getElementById('tripSelector').addEventListener('change', (e) => {
     selectTrip(e.target.value);
   });
+
+  // Home View navigation listeners
+  const navLogoBtn = document.getElementById('navLogoBtn');
+  if (navLogoBtn) navLogoBtn.addEventListener('click', () => renderHomeView());
+
+  const navHomeBtn = document.getElementById('navHomeBtn');
+  if (navHomeBtn) navHomeBtn.addEventListener('click', () => renderHomeView());
+
+  const btnBackToHome = document.getElementById('btnBackToHome');
+  if (btnBackToHome) btnBackToHome.addEventListener('click', () => renderHomeView());
+
+  const btnHomeCreateTrip = document.getElementById('btnHomeCreateTrip');
+  if (btnHomeCreateTrip) btnHomeCreateTrip.addEventListener('click', () => openModal('modalNewTrip'));
+
+  const btnHomeGoAdmin = document.getElementById('btnHomeGoAdmin');
+  if (btnHomeGoAdmin) {
+    btnHomeGoAdmin.addEventListener('click', async () => {
+      if (state.trips.length > 0) {
+        await selectTrip(state.trips[0].id);
+        switchTab('admin');
+      } else {
+        showToast('Please create a trip first to access administration and policies.', 'info');
+      }
+    });
+  }
 
   // Tab switching
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -861,11 +1156,16 @@ function renderAll() {
 
 function renderTripSelector() {
   const sel = document.getElementById('tripSelector');
-  sel.innerHTML = state.trips.map(t => `
-    <option value="${t.id}" ${state.currentTrip && state.currentTrip.id === t.id ? 'selected' : ''}>
-      ${t.title} (${t.mode}) ${t.status === 'ENDED' ? '• [CLOSED]' : ''}
-    </option>
-  `).join('');
+  if (!sel) return;
+  const isHome = !state.currentTrip;
+  sel.innerHTML = [
+    `<option value="__home__" ${isHome ? 'selected' : ''}>🏠 Home — All Trips Overview</option>`,
+    ...state.trips.map(t => `
+      <option value="${t.id}" ${state.currentTrip && state.currentTrip.id === t.id ? 'selected' : ''}>
+        ${t.status === 'ENDED' ? '🔒 [CLOSED] ' : '🟢 '}${t.title} (${t.mode})
+      </option>
+    `)
+  ].join('');
 }
 
 function renderTripHeader() {
@@ -2176,9 +2476,15 @@ window.handleToggleEndTrip = async function(tripId) {
       state.currentTrip = updated;
     }
 
-    showToast(`Trip is now ${updated.status}!`, updated.status === 'ENDED' ? 'info' : 'success');
     renderTripSelector();
-    renderAll();
+
+    if (updated.status === 'ENDED') {
+      showToast(`Trip "${updated.title}" concluded & locked! Showing Home overview.`, 'info');
+      await renderHomeView();
+    } else {
+      showToast(`Trip "${updated.title}" reopened and active!`, 'success');
+      await selectTrip(tripId);
+    }
   } catch (err) {
     showToast('Failed to toggle trip status', 'error');
   }
@@ -2366,3 +2672,5 @@ function showToast(message, type = 'info') {
     setTimeout(() => toast.remove(), 300);
   }, 3500);
 }
+
+window.selectTrip = selectTrip;

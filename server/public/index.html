@@ -47,21 +47,27 @@
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between">
       
       <!-- Logo & Branding -->
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-roseaccent-600 to-roseaccent-800 flex items-center justify-center text-white shadow-md shadow-roseaccent-500/20">
+      <!-- Logo & Branding (Clickable to Home) -->
+      <div id="navLogoBtn" class="flex items-center gap-3 cursor-pointer group" title="Go to Home">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-roseaccent-600 to-roseaccent-800 flex items-center justify-center text-white shadow-md shadow-roseaccent-500/20 group-hover:scale-105 transition">
           <i data-lucide="split" class="w-5 h-5"></i>
         </div>
         <div>
           <div class="flex items-center gap-2">
-            <span class="text-xl font-bold tracking-tight text-stone-900">Omnivance</span>
+            <span class="text-xl font-bold tracking-tight text-stone-900 group-hover:text-roseaccent-700 transition">Omnivance</span>
             <span class="text-xs px-2 py-0.5 rounded-full font-medium bg-roseaccent-100 text-roseaccent-800 border border-roseaccent-200">Ledger</span>
           </div>
           <p class="text-xs text-stone-500 font-medium">From Friends Outings to Corporate Travel</p>
         </div>
       </div>
 
-      <!-- Center: Trip Selector Dropdown & Quick Mode Indicator -->
-      <div class="flex items-center gap-3">
+      <!-- Center: Home Button, Trip Selector Dropdown & Quick Mode Indicator -->
+      <div class="flex items-center gap-2.5">
+        <button id="navHomeBtn" class="px-3 py-2 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-700 hover:bg-cream-100 flex items-center gap-1.5 transition shadow-sm" title="Go to Home / All Trips">
+          <i data-lucide="home" class="w-4 h-4 text-roseaccent-600"></i>
+          <span class="hidden md:inline">Home</span>
+        </button>
+
         <div class="relative">
           <select id="tripSelector" class="appearance-none bg-cream-50 border border-cream-300 text-stone-800 text-sm font-semibold rounded-xl pl-3.5 pr-9 py-2 focus:outline-none focus:ring-2 focus:ring-roseaccent-500/30 focus:border-roseaccent-500 cursor-pointer shadow-sm">
             <!-- Populated via JS -->
@@ -109,8 +115,90 @@
       </div>
     </div>
 
+    <!-- Home Page / Trips Overview Hub -->
+    <div id="homeView" class="hidden">
+      <!-- Welcome Hero Banner -->
+      <div class="mb-8 p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-cream-50 via-roseaccent-50/40 to-cream-50 border border-cream-300 relative overflow-hidden shadow-sm">
+        <div class="max-w-2xl relative z-10">
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-roseaccent-100 border border-roseaccent-200 text-roseaccent-800 text-xs font-bold mb-3">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5 text-roseaccent-600"></i>
+            <span>Travel & Expense Command Center</span>
+          </div>
+          <h1 class="text-2xl sm:text-3xl font-extrabold text-stone-900 tracking-tight">Your Trips & Expense Workspaces</h1>
+          <p class="text-sm text-stone-500 mt-2 leading-relaxed">
+            Manage active travel ledgers, split outing costs with automated debt simplification, or review settled and concluded trips.
+          </p>
+          <div class="mt-5 flex items-center gap-3 flex-wrap">
+            <button id="btnHomeCreateTrip" class="btn-rose-primary px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2">
+              <i data-lucide="plus-circle" class="w-4 h-4"></i>
+              <span>Create New Trip</span>
+            </button>
+            <button id="btnHomeGoAdmin" class="px-4 py-2.5 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-700 hover:bg-cream-100 flex items-center gap-2 transition">
+              <i data-lucide="shield" class="w-4 h-4 text-roseaccent-600"></i>
+              <span>Admin & Policies</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Metrics Ribbon -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8">
+        <div class="card-cream p-4 rounded-2xl">
+          <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Active Trips</div>
+          <div id="homeMetricActiveTrips" class="text-2xl font-bold text-stone-900 mt-1">0</div>
+        </div>
+        <div class="card-cream p-4 rounded-2xl">
+          <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Concluded Trips</div>
+          <div id="homeMetricEndedTrips" class="text-2xl font-bold text-stone-900 mt-1">0</div>
+        </div>
+        <div class="card-cream p-4 rounded-2xl">
+          <div class="text-[11px] font-semibold text-stone-400 uppercase tracking-wider">Total Members</div>
+          <div id="homeMetricTotalMembers" class="text-2xl font-bold text-stone-900 mt-1">0</div>
+        </div>
+        <div class="card-cream p-4 rounded-2xl">
+          <div class="text-[11px] font-semibold text-roseaccent-800 uppercase tracking-wider">Total Spend Logged</div>
+          <div id="homeMetricTotalSpend" class="text-2xl font-bold text-roseaccent-800 mt-1">₹0.00</div>
+        </div>
+      </div>
+
+      <!-- Section: Active Trips -->
+      <div class="mb-10">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+            <h2 class="text-lg font-bold text-stone-900">Active Trips</h2>
+          </div>
+          <span id="homeActiveTripsCountBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">0 Active</span>
+        </div>
+        <div id="homeActiveTripsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <!-- Populated dynamically via JS -->
+        </div>
+      </div>
+
+      <!-- Section: Past / Concluded Trips -->
+      <div id="homeConcludedTripsSection" class="mb-10">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+            <h2 class="text-lg font-bold text-stone-900">Past & Concluded Trips</h2>
+          </div>
+          <span id="homeEndedTripsCountBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-semibold">0 Concluded</span>
+        </div>
+        <div id="homeEndedTripsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <!-- Populated dynamically via JS -->
+        </div>
+      </div>
+    </div>
+
     <!-- Active Trip Dashboard -->
     <div id="activeTripDashboard">
+      <!-- Back to Home Bar -->
+      <div class="mb-4">
+        <button id="btnBackToHome" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-cream-300 text-stone-600 hover:text-stone-900 hover:bg-cream-50 transition shadow-sm">
+          <i data-lucide="arrow-left" class="w-3.5 h-3.5 text-roseaccent-600"></i>
+          <span>← Back to Home / All Trips</span>
+        </button>
+      </div>
       <!-- Trip Header & Meta Banner -->
       <div class="mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
