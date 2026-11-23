@@ -5,12 +5,19 @@ const DATA_DIR = path.join(__dirname, '../../data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const TMP_FILE = path.join(DATA_DIR, 'db.tmp.json');
 
-// Clean empty schema
+// Clean empty schema with audit logs and system settings
 const SEED_DATA = {
   users: [],
   trips: [],
   expenses: [],
-  settlements: []
+  settlements: [],
+  auditLogs: [],
+  settings: {
+    defaultPerDiemLimit: 3000,
+    defaultReceiptRequiredThreshold: 500,
+    currency: 'INR',
+    currencySymbol: '₹'
+  }
 };
 
 let cache = null;
@@ -34,6 +41,8 @@ function loadData() {
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
     cache = JSON.parse(raw);
+    if (!cache.auditLogs) cache.auditLogs = [];
+    if (!cache.settings) cache.settings = SEED_DATA.settings;
     return cache;
   } catch (err) {
     console.error("Error reading db.json, using clean schema:", err);
@@ -56,6 +65,32 @@ module.exports = {
   saveDb: (data) => saveData(data),
   resetCache: () => { cache = null; return loadData(); },
 
+  // Settings
+  getSettings: () => loadData().settings || SEED_DATA.settings,
+  updateSettings: (updates) => {
+    const db = loadData();
+    db.settings = { ...(db.settings || SEED_DATA.settings), ...updates };
+    saveData(db);
+    return db.settings;
+  },
+
+  // Audit Logs
+  getAuditLogs: () => (loadData().auditLogs || []).slice(0, 50),
+  addAuditLog: (action, details) => {
+    const db = loadData();
+    if (!db.auditLogs) db.auditLogs = [];
+    const entry = {
+      id: `log_${Date.now()}`,
+      action,
+      details,
+      timestamp: new Date().toISOString()
+    };
+    db.auditLogs.unshift(entry);
+    if (db.auditLogs.length > 100) db.auditLogs = db.auditLogs.slice(0, 100);
+    saveData(db);
+    return entry;
+  },
+
   // Users
   getUsers: () => loadData().users,
   getUserById: (id) => loadData().users.find(u => u.id === id),
@@ -64,6 +99,22 @@ module.exports = {
     db.users.push(user);
     saveData(db);
     return user;
+  },
+  updateUser: (id, updates) => {
+    const db = loadData();
+    const idx = db.users.findIndex(u => u.id === id);
+    if (idx === -1) return null;
+    db.users[idx] = { ...db.users[idx], ...updates };
+    saveData(db);
+    return db.users[idx];
+  },
+  deleteUser: (id) => {
+    const db = loadData();
+    const idx = db.users.findIndex(u => u.id === id);
+    if (idx === -1) return false;
+    db.users.splice(idx, 1);
+    saveData(db);
+    return true;
   },
 
   // Trips
@@ -82,6 +133,16 @@ module.exports = {
     db.trips[idx] = { ...db.trips[idx], ...updates };
     saveData(db);
     return db.trips[idx];
+  },
+  deleteTrip: (id) => {
+    const db = loadData();
+    const idx = db.trips.findIndex(t => t.id === id);
+    if (idx === -1) return false;
+    db.trips.splice(idx, 1);
+    db.expenses = db.expenses.filter(e => e.tripId !== id);
+    db.settlements = db.settlements.filter(s => s.tripId !== id);
+    saveData(db);
+    return true;
   },
 
   // Expenses

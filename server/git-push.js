@@ -21,7 +21,8 @@ async function push() {
       http,
       dir: rootDir,
       remote: 'origin',
-      ref: 'main',
+      ref: 'refs/heads/main',
+      remoteRef: 'refs/heads/main',
       force: true,
       onAuth: () => ({ username: token })
     });

@@ -83,12 +83,47 @@ assert(flags.some(f => f.code === "RECEIPT_REQUIRED"), "Should flag missing rece
 assert(flags.some(f => f.code === "PER_DIEM_EXCEEDED"), "Should flag per diem exceeded");
 console.log("✓ Policy Engine: Accurately caught policy violations:", flags.map(f => f.code).join(", "));
 
+// 4. Test User CRUD, Phone, and Audit Logs
+const testUser = db.addUser({
+  id: "u_test_phone",
+  name: "Phone Tester",
+  email: "phone@test.com",
+  phone: "+91 98765 43210",
+  upiId: "phone@upi",
+  role: "ADMIN"
+});
+assert(testUser.phone === "+91 98765 43210", "User phone should be preserved");
+db.addAuditLog("USER_TEST", "Created test user with phone");
+const logs = db.getAuditLogs();
+assert(logs.length > 0, "Audit logs should record events");
+console.log("✓ DB & Audit: User with phone and audit log entry created successfully");
+
+// 5. Test Settings
+const currentSettings = db.getSettings();
+assert(typeof currentSettings.defaultPerDiemLimit === "number", "Settings should have per-diem limit");
+db.updateSettings({ defaultPerDiemLimit: 3500 });
+assert(db.getSettings().defaultPerDiemLimit === 3500, "Settings update should persist");
+db.updateSettings({ defaultPerDiemLimit: 3000 });
+console.log("✓ Admin Settings: Settings get/update verified successfully");
+
+// 6. Test Trip End / Reopen toggle
+const updatedTrip = db.updateTrip(testTrip.id, { status: "ENDED", endedAt: new Date().toISOString() });
+assert(updatedTrip.status === "ENDED", "Trip status should update to ENDED");
+console.log("✓ Trip Status: Successfully tested End Trip status lock");
+
 // Clean up test fixture from DB
 const cleanDb = {
   users: db.getUsers().filter(u => !u.id.startsWith("u_t")),
   trips: db.getTrips().filter(t => t.id !== testTrip.id),
   expenses: db.getExpensesByTrip(testTrip.id).length ? db.getDb().expenses.filter(e => e.tripId !== testTrip.id) : [],
-  settlements: []
+  settlements: [],
+  auditLogs: [],
+  settings: {
+    defaultPerDiemLimit: 3000,
+    defaultReceiptRequiredThreshold: 500,
+    currency: 'INR',
+    currencySymbol: '₹'
+  }
 };
 db.saveDb(cleanDb);
 

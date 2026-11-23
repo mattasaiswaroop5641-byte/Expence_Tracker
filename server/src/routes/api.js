@@ -17,7 +17,7 @@ router.get('/users', (req, res) => {
 });
 
 router.post('/users', (req, res) => {
-  const { name, email, upiId, role } = req.body;
+  const { name, email, upiId, phone, role } = req.body;
   if (!name || name.trim() === '') {
     return res.status(400).json({ error: 'Name is required' });
   }
@@ -27,13 +27,40 @@ router.post('/users', (req, res) => {
     id,
     name: name.trim(),
     email: email || `${id}@example.com`,
+    phone: phone ? phone.trim() : '',
     avatar: `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(name)}`,
     upiId: upiId || '',
     role: role || 'EMPLOYEE'
   };
 
   db.addUser(newUser);
+  db.addAuditLog('USER_CREATED', `User "${newUser.name}" (${newUser.role}) added`);
   res.status(201).json(newUser);
+});
+
+router.put('/users/:id', (req, res) => {
+  const { name, email, upiId, phone, role } = req.body;
+  const existing = db.getUserById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'User not found' });
+
+  const updates = {};
+  if (name !== undefined) updates.name = name.trim();
+  if (email !== undefined) updates.email = email.trim();
+  if (upiId !== undefined) updates.upiId = upiId.trim();
+  if (phone !== undefined) updates.phone = phone.trim();
+  if (role !== undefined) updates.role = role.trim();
+
+  const updated = db.updateUser(req.params.id, updates);
+  db.addAuditLog('USER_UPDATED', `User "${updated.name}" updated`);
+  res.json(updated);
+});
+
+router.delete('/users/:id', (req, res) => {
+  const existing = db.getUserById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'User not found' });
+  db.deleteUser(req.params.id);
+  db.addAuditLog('USER_DELETED', `User "${existing.name}" removed`);
+  res.json({ success: true, message: 'User deleted' });
 });
 
 // --- Trips ---
@@ -129,6 +156,7 @@ router.post('/trips', (req, res) => {
   };
 
   db.createTrip(newTrip);
+  db.addAuditLog('TRIP_CREATED', `Trip "${newTrip.title}" (${newTrip.mode}) created`);
   res.status(201).json(newTrip);
 });
 
@@ -141,6 +169,26 @@ router.get('/trips/:id', (req, res) => {
 router.put('/trips/:id', (req, res) => {
   const updated = db.updateTrip(req.params.id, req.body);
   if (!updated) return res.status(404).json({ error: 'Trip not found' });
+  res.json(updated);
+});
+
+router.delete('/trips/:id', (req, res) => {
+  const existing = db.getTripById(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Trip not found' });
+  db.deleteTrip(req.params.id);
+  db.addAuditLog('TRIP_DELETED', `Trip "${existing.title}" deleted`);
+  res.json({ success: true, message: 'Trip deleted' });
+});
+
+router.post('/trips/:id/toggle-end', (req, res) => {
+  const trip = db.getTripById(req.params.id);
+  if (!trip) return res.status(404).json({ error: 'Trip not found' });
+  const nextStatus = trip.status === 'ENDED' ? 'ACTIVE' : 'ENDED';
+  const updated = db.updateTrip(trip.id, {
+    status: nextStatus,
+    endedAt: nextStatus === 'ENDED' ? new Date().toISOString() : null
+  });
+  db.addAuditLog('TRIP_STATUS_CHANGE', `Trip "${trip.title}" status changed to ${nextStatus}`);
   res.json(updated);
 });
 
@@ -162,6 +210,10 @@ router.post('/trips/:id/expenses', (req, res) => {
   const trip = db.getTripById(req.params.id);
   if (!trip) return res.status(404).json({ error: 'Trip not found' });
 
+  if (trip.status === 'ENDED') {
+    return res.status(400).json({ error: 'This trip is closed/ended. Reopen the trip in order to record new expenses.' });
+  }
+
   const {
     title,
     amount,
@@ -171,6 +223,8 @@ router.post('/trips/:id/expenses', (req, res) => {
     splitType,
     splits,
     receipt,
+    receiptData,
+    location,
     notes,
     isReimbursable
   } = req.body;
@@ -225,6 +279,8 @@ router.post('/trips/:id/expenses', (req, res) => {
     splits: finalSplits,
     isReimbursable: Boolean(isReimbursable || trip.mode === 'CORPORATE'),
     receipt: receipt || null,
+    receiptData: receiptData || receipt || null,
+    location: location || null,
     notes: notes || '',
     policyFlags: []
   };
@@ -233,12 +289,15 @@ router.post('/trips/:id/expenses', (req, res) => {
   newExpense.policyFlags = policyService.evaluatePolicy(newExpense, trip);
 
   db.addExpense(newExpense);
+  db.addAuditLog('EXPENSE_ADDED', `Expense "${newExpense.title}" (${trip.currencySymbol}${newExpense.amount}) added to trip "${trip.title}"`);
   res.status(201).json(newExpense);
 });
 
 router.delete('/expenses/:id', (req, res) => {
+  const existing = db.getExpenseById(req.params.id);
   const success = db.deleteExpense(req.params.id);
   if (!success) return res.status(404).json({ error: 'Expense not found' });
+  db.addAuditLog('EXPENSE_DELETED', `Expense "${existing ? existing.title : req.params.id}" removed`);
   res.json({ success: true, message: 'Expense deleted' });
 });
 
@@ -332,6 +391,66 @@ router.get('/trips/:id/export', (req, res) => {
     balances,
     expenses
   });
+});
+
+// --- Admin Routes ---
+router.get('/admin/stats', (req, res) => {
+  const trips = db.getTrips();
+  const users = db.getUsers();
+  const expenses = db.getAllExpenses();
+  const settlements = (db.getDb().settlements || []);
+  const totalVolume = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const activeTrips = trips.filter(t => t.status !== 'ENDED').length;
+  const endedTrips = trips.filter(t => t.status === 'ENDED').length;
+
+  res.json({
+    totalTrips: trips.length,
+    activeTrips,
+    endedTrips,
+    totalUsers: users.length,
+    totalExpenses: expenses.length,
+    totalVolume: Math.round(totalVolume * 100) / 100,
+    totalSettlements: settlements.length
+  });
+});
+
+router.get('/admin/audit-logs', (req, res) => {
+  res.json(db.getAuditLogs());
+});
+
+router.get('/admin/settings', (req, res) => {
+  res.json(db.getSettings());
+});
+
+router.post('/admin/settings', (req, res) => {
+  const { defaultPerDiemLimit, defaultReceiptRequiredThreshold, currency, currencySymbol } = req.body;
+  const updates = {};
+  if (defaultPerDiemLimit !== undefined) updates.defaultPerDiemLimit = Number(defaultPerDiemLimit);
+  if (defaultReceiptRequiredThreshold !== undefined) updates.defaultReceiptRequiredThreshold = Number(defaultReceiptRequiredThreshold);
+  if (currency !== undefined) updates.currency = currency;
+  if (currencySymbol !== undefined) updates.currencySymbol = currencySymbol;
+
+  const saved = db.updateSettings(updates);
+  db.addAuditLog('SETTINGS_UPDATED', `Corporate settings updated`);
+  res.json(saved);
+});
+
+router.get('/admin/backup', (req, res) => {
+  const fullData = db.getDb();
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="expense_tracker_backup_${Date.now()}.json"`);
+  res.json(fullData);
+});
+
+router.post('/admin/restore', (req, res) => {
+  const { data } = req.body;
+  if (!data || !Array.isArray(data.users) || !Array.isArray(data.trips)) {
+    return res.status(400).json({ error: 'Invalid backup file schema: must contain users and trips arrays' });
+  }
+  db.saveDb(data);
+  db.resetCache();
+  db.addAuditLog('DATABASE_RESTORED', `Database restored from backup: ${data.trips.length} trips, ${data.users.length} users`);
+  res.json({ success: true, message: 'Database successfully restored from backup' });
 });
 
 module.exports = router;

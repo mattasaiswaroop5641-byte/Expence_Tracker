@@ -1,5 +1,6 @@
 /**
  * Omnivance Ledger — Frontend Application
+ * Unified Expense Tracker with Dual-Engine (Node.js & GitHub Pages LocalStorage)
  */
 
 const state = {
@@ -13,7 +14,12 @@ const state = {
   categoryFilter: 'ALL',
   allExpensesScope: 'CURRENT', // 'CURRENT' | 'ALL_TRIPS'
   allExpensesSearch: '',
-  currentUser: 'u_alex' // Default simulated active session user
+  currentUser: 'u_alex', // Default simulated active session user
+  pendingReceiptData: null, // { name, dataUrl, size, type }
+  pendingLocation: null, // { lat, lng, name }
+  adminStats: null,
+  adminSettings: null,
+  auditLogs: []
 };
 
 const API_BASE = '/api';
@@ -54,14 +60,52 @@ const localDb = {
   load() {
     try {
       const stored = localStorage.getItem('omnivance_ledger_db');
-      if (stored) return JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (!parsed.auditLogs) parsed.auditLogs = [];
+        if (!parsed.settings) {
+          parsed.settings = {
+            defaultPerDiemLimit: 3000,
+            defaultReceiptRequiredThreshold: 500,
+            currency: 'INR',
+            currencySymbol: '₹'
+          };
+        }
+        return parsed;
+      }
     } catch (e) {}
-    return { users: [], trips: [], expenses: [], settlements: [] };
+    return {
+      users: [],
+      trips: [],
+      expenses: [],
+      settlements: [],
+      auditLogs: [],
+      settings: {
+        defaultPerDiemLimit: 3000,
+        defaultReceiptRequiredThreshold: 500,
+        currency: 'INR',
+        currencySymbol: '₹'
+      }
+    };
   },
   save(data) {
     try {
       localStorage.setItem('omnivance_ledger_db', JSON.stringify(data));
     } catch (e) {}
+  },
+  addAuditLog(action, details) {
+    const db = localDb.load();
+    if (!db.auditLogs) db.auditLogs = [];
+    const entry = {
+      id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      action,
+      details,
+      timestamp: new Date().toISOString()
+    };
+    db.auditLogs.unshift(entry);
+    if (db.auditLogs.length > 100) db.auditLogs = db.auditLogs.slice(0, 100);
+    localDb.save(db);
+    return entry;
   }
 };
 
@@ -106,12 +150,13 @@ function clientCalculateBalances(tripId) {
   });
 
   const membersSummary = (trip.members || []).map(mId => {
-    const user = db.users.find(u => u.id === mId) || { id: mId, name: mId, avatar: '' };
+    const user = db.users.find(u => u.id === mId) || { id: mId, name: mId, avatar: '', phone: '', upiId: '' };
     const net = Math.round((memberBalances[mId] || 0) * 100) / 100;
     return {
       userId: mId,
       name: user.name,
       email: user.email,
+      phone: user.phone || '',
       avatar: user.avatar,
       upiId: user.upiId,
       totalPaid: Math.round((memberSpent[mId] || 0) * 100) / 100,
@@ -168,7 +213,7 @@ function clientEvaluatePolicy(expense, trip) {
   const threshold = Number(cfg.receiptRequiredThreshold) || 500;
   const amt = Number(expense.amount) || 0;
 
-  if (amt >= threshold && (!expense.receipt || expense.receipt.trim() === '')) {
+  if (amt >= threshold && (!expense.receipt && !expense.receiptData)) {
     flags.push({ code: 'RECEIPT_REQUIRED', severity: 'WARNING', message: `Receipt mandatory for business expenses ≥ ${trip.currencySymbol || '₹'}${threshold}` });
   }
   if (perDiem > 0 && expense.category === 'FOOD') {
@@ -197,21 +242,44 @@ async function api(path, options = {}) {
   const body = options.body ? JSON.parse(options.body) : {};
   const db = localDb.load();
 
+  // Users
   if (path === '/users' && method === 'GET') return db.users;
   if (path === '/users' && method === 'POST') {
     const newUser = {
       id: `u_${Date.now()}`,
       name: body.name,
       email: body.email || '',
-      upiId: body.upiId || '',
+      phone: body.phone ? body.phone.trim() : '',
+      upiId: body.upiId ? body.upiId.trim() : '',
       avatar: `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(body.name)}`,
-      role: 'EMPLOYEE'
+      role: body.role || 'EMPLOYEE'
     };
     db.users.push(newUser);
     localDb.save(db);
+    localDb.addAuditLog('USER_CREATED', `User "${newUser.name}" (${newUser.role}) created`);
     return newUser;
   }
+  if (path.startsWith('/users/') && method === 'PUT') {
+    const uid = path.split('/')[2];
+    const idx = db.users.findIndex(u => u.id === uid);
+    if (idx !== -1) {
+      db.users[idx] = { ...db.users[idx], ...body };
+      localDb.save(db);
+      localDb.addAuditLog('USER_UPDATED', `User "${db.users[idx].name}" updated`);
+      return db.users[idx];
+    }
+    return null;
+  }
+  if (path.startsWith('/users/') && method === 'DELETE') {
+    const uid = path.split('/')[2];
+    const existing = db.users.find(u => u.id === uid);
+    db.users = db.users.filter(u => u.id !== uid);
+    localDb.save(db);
+    localDb.addAuditLog('USER_DELETED', `User "${existing ? existing.name : uid}" removed`);
+    return { success: true };
+  }
 
+  // Trips
   if (path === '/trips' && method === 'GET') return db.trips;
   if (path === '/trips' && method === 'POST') {
     let finalMemberIds = [];
@@ -225,6 +293,7 @@ async function api(path, options = {}) {
             id: `u_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now().toString().slice(-4)}`,
             name,
             email: `${name.toLowerCase()}@example.com`,
+            phone: '',
             avatar: `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(name)}`,
             upiId: '',
             role: 'EMPLOYEE'
@@ -254,6 +323,7 @@ async function api(path, options = {}) {
     };
     db.trips.unshift(newTrip);
     localDb.save(db);
+    localDb.addAuditLog('TRIP_CREATED', `Trip "${newTrip.title}" (${newTrip.mode}) created`);
     return newTrip;
   }
 
@@ -265,9 +335,38 @@ async function api(path, options = {}) {
     if (parts[3] === 'balances') return clientCalculateBalances(tripId);
   }
 
+  if (path.startsWith('/trips/') && path.endsWith('/toggle-end') && method === 'POST') {
+    const tripId = path.split('/')[2];
+    const trip = db.trips.find(t => t.id === tripId);
+    if (trip) {
+      trip.status = trip.status === 'ENDED' ? 'ACTIVE' : 'ENDED';
+      trip.endedAt = trip.status === 'ENDED' ? new Date().toISOString() : null;
+      localDb.save(db);
+      localDb.addAuditLog('TRIP_STATUS_CHANGE', `Trip "${trip.title}" status changed to ${trip.status}`);
+      return trip;
+    }
+    return null;
+  }
+
+  if (path.startsWith('/trips/') && method === 'DELETE') {
+    const tripId = path.split('/')[2];
+    const trip = db.trips.find(t => t.id === tripId);
+    db.trips = db.trips.filter(t => t.id !== tripId);
+    db.expenses = db.expenses.filter(e => e.tripId !== tripId);
+    db.settlements = db.settlements.filter(s => s.tripId !== tripId);
+    localDb.save(db);
+    localDb.addAuditLog('TRIP_DELETED', `Trip "${trip ? trip.title : tripId}" deleted`);
+    return { success: true };
+  }
+
+  // Expenses
   if (path.startsWith('/trips/') && path.endsWith('/expenses') && method === 'POST') {
     const tripId = path.split('/')[2];
     const trip = db.trips.find(t => t.id === tripId);
+    if (trip && trip.status === 'ENDED') {
+      throw new Error('This trip is concluded and locked. Reopen the trip in order to record new expenses.');
+    }
+
     const amount = Number(body.amount) || 0;
     const splitMembers = Array.isArray(body.splits) ? body.splits : (trip ? trip.members : []);
     const count = splitMembers.length || 1;
@@ -290,13 +389,16 @@ async function api(path, options = {}) {
       paidBy: body.paidBy,
       splitType: 'EQUAL',
       splits,
-      receipt: body.receipt || null,
+      receipt: body.receipt || (body.receiptData ? (body.receiptName || 'receipt') : null),
+      receiptData: body.receiptData || null,
+      location: body.location || null,
       notes: body.notes || '',
       policyFlags: []
     };
     newExp.policyFlags = clientEvaluatePolicy(newExp, trip);
     db.expenses.unshift(newExp);
     localDb.save(db);
+    localDb.addAuditLog('EXPENSE_ADDED', `Expense "${newExp.title}" (₹${newExp.amount}) recorded in "${trip ? trip.title : tripId}"`);
     return newExp;
   }
 
@@ -313,6 +415,7 @@ async function api(path, options = {}) {
     };
     db.settlements.push(newSettle);
     localDb.save(db);
+    localDb.addAuditLog('SETTLEMENT_RECORDED', `Settlement of ₹${newSettle.amount} recorded`);
     return { settlement: newSettle, updatedBalances: clientCalculateBalances(tripId) };
   }
 
@@ -322,18 +425,90 @@ async function api(path, options = {}) {
     if (trip && trip.corporateConfig) {
       trip.corporateConfig.approvalStatus = body.action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
       localDb.save(db);
+      localDb.addAuditLog('CORPORATE_APPROVAL', `Trip "${trip.title}" corporate report ${trip.corporateConfig.approvalStatus}`);
     }
     return { trip };
   }
 
   if (path.startsWith('/expenses/') && method === 'DELETE') {
     const expId = path.split('/')[2];
+    const exp = db.expenses.find(e => e.id === expId);
     db.expenses = db.expenses.filter(e => e.id !== expId);
     localDb.save(db);
+    localDb.addAuditLog('EXPENSE_DELETED', `Expense "${exp ? exp.title : expId}" deleted`);
     return { success: true };
   }
 
   if (path === '/expenses' && method === 'GET') return db.expenses;
+
+  // Admin Routes
+  if (path === '/admin/stats' && method === 'GET') {
+    const trips = db.trips || [];
+    const users = db.users || [];
+    const expenses = db.expenses || [];
+    const settlements = db.settlements || [];
+    const totalVolume = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    return {
+      totalTrips: trips.length,
+      activeTrips: trips.filter(t => t.status !== 'ENDED').length,
+      endedTrips: trips.filter(t => t.status === 'ENDED').length,
+      totalUsers: users.length,
+      totalExpenses: expenses.length,
+      totalVolume: Math.round(totalVolume * 100) / 100,
+      totalSettlements: settlements.length
+    };
+  }
+
+  if (path === '/admin/audit-logs' && method === 'GET') {
+    return (db.auditLogs || []).slice(0, 50);
+  }
+
+  if (path === '/admin/settings' && method === 'GET') {
+    return db.settings || { defaultPerDiemLimit: 3000, defaultReceiptRequiredThreshold: 500, currency: 'INR', currencySymbol: '₹' };
+  }
+
+  if (path === '/admin/settings' && method === 'POST') {
+    db.settings = { ...(db.settings || {}), ...body };
+    localDb.save(db);
+    localDb.addAuditLog('SETTINGS_UPDATED', 'Global corporate expense policies updated');
+    return db.settings;
+  }
+
+  if (path === '/admin/backup' && method === 'GET') {
+    return db;
+  }
+
+  if (path === '/admin/restore' && method === 'POST') {
+    if (body.data && Array.isArray(body.data.users) && Array.isArray(body.data.trips)) {
+      localDb.save(body.data);
+      localDb.addAuditLog('DATABASE_RESTORED', `Database restored from backup: ${body.data.trips.length} trips, ${body.data.users.length} users`);
+      return { success: true };
+    }
+    throw new Error('Invalid backup schema');
+  }
+
+  if ((path === '/reset' || path === '/admin/reset') && method === 'POST') {
+    const clean = {
+      users: [],
+      trips: [],
+      expenses: [],
+      settlements: [],
+      auditLogs: [{
+        id: `log_${Date.now()}`,
+        action: 'SYSTEM_RESET',
+        details: 'System cleared to fresh empty workspace',
+        timestamp: new Date().toISOString()
+      }],
+      settings: {
+        defaultPerDiemLimit: 3000,
+        defaultReceiptRequiredThreshold: 500,
+        currency: 'INR',
+        currencySymbol: '₹'
+      }
+    };
+    localDb.save(clean);
+    return { message: 'Database reset to clean state' };
+  }
 
   return {};
 }
@@ -350,28 +525,27 @@ async function fetchTrips() {
 }
 
 async function selectTrip(tripId) {
-  if (!tripId) {
-    renderEmptyState();
-    return;
-  }
+  const trip = state.trips.find(t => t.id === tripId);
+  if (!trip) return;
+
+  state.currentTrip = trip;
   document.getElementById('noTripsContainer').classList.add('hidden');
   document.getElementById('activeTripDashboard').classList.remove('hidden');
 
-  state.currentTrip = await api(`/trips/${tripId}`);
-  const [expenses, balances] = await Promise.all([
-    api(`/trips/${tripId}/expenses`),
-    api(`/trips/${tripId}/balances`)
-  ]);
+  try {
+    const [expenses, balances] = await Promise.all([
+      api(`/trips/${tripId}/expenses`),
+      api(`/trips/${tripId}/balances`)
+    ]);
 
-  state.expenses = expenses || [];
-  state.balances = balances || null;
+    state.expenses = expenses || [];
+    state.balances = balances || null;
 
-  if (state.currentTrip && state.currentTrip.members && state.currentTrip.members.length > 0) {
-    state.currentUser = state.currentTrip.members[0];
+    renderAll();
+  } catch (err) {
+    showToast('Failed to load trip details', 'error');
+    console.error(err);
   }
-
-  renderTripSelector();
-  renderAll();
 }
 
 // ==================== EVENT LISTENERS ====================
@@ -426,6 +600,12 @@ function setupEventListeners() {
   document.getElementById('formSettlePayment').addEventListener('submit', handleSettlePayment);
   document.getElementById('formAddMember').addEventListener('submit', handleAddMember);
 
+  const editUserForm = document.getElementById('formEditUser');
+  if (editUserForm) editUserForm.addEventListener('submit', handleEditUser);
+
+  const adminSettingsForm = document.getElementById('formAdminSettings');
+  if (adminSettingsForm) adminSettingsForm.addEventListener('submit', handleAdminSettingsSave);
+
   // Dynamic split preview on input change
   document.getElementById('expAmount').addEventListener('input', updateSplitPreview);
   
@@ -441,19 +621,11 @@ function setupEventListeners() {
     });
   });
 
-  // Mock Receipt Simulation button
-  document.getElementById('btnSimulateReceipt').addEventListener('click', () => {
-    const receipts = ['uber_receipt_e92.pdf', 'hotel_invoice_final.png', 'restaurant_tax_bill.jpg', 'airline_ticket_boarding.pdf'];
-    const chosen = receipts[Math.floor(Math.random() * receipts.length)];
-    document.getElementById('expReceipt').value = chosen;
-    showToast(`Simulated receipt attached: ${chosen}`, 'info');
-  });
-
-  // Export CSV (Dual engine: works on GitHub Pages & Localhost)
+  // Export CSV
   document.getElementById('btnExportCsv').addEventListener('click', () => {
     if (!state.currentTrip) return;
     const trip = state.currentTrip;
-    let csv = `Date,Expense ID,Title,Category,Amount (${trip.currency}),Paid By,Splits,Policy Flags,Receipt\n`;
+    let csv = `Date,Expense ID,Title,Category,Amount (${trip.currency}),Paid By,Splits,Policy Flags,Location,Receipt\n`;
     state.expenses.forEach(e => {
       const payer = state.users.find(u => u.id === e.paidBy);
       const payerName = payer ? payer.name : e.paidBy;
@@ -462,7 +634,8 @@ function setupEventListeners() {
         return `${u ? u.name : s.userId}:${s.amount}`;
       }).join('; ');
       const flagsStr = (e.policyFlags || []).map(f => f.code).join('; ');
-      csv += `"${e.date}","${e.id}","${(e.title || '').replace(/"/g, '""')}","${e.category}",${e.amount},"${payerName}","${splitsStr}","${flagsStr}","${e.receipt || 'None'}"\n`;
+      const locStr = e.location ? `${e.location.name || ''} (${e.location.lat},${e.location.lng})` : 'None';
+      csv += `"${e.date}","${e.id}","${(e.title || '').replace(/"/g, '""')}","${e.category}",${e.amount},"${payerName}","${splitsStr}","${flagsStr}","${locStr}","${e.receipt || 'None'}"\n`;
     });
     
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -479,6 +652,126 @@ function setupEventListeners() {
   document.getElementById('btnApproveTrip').addEventListener('click', () => handleApprovalAction('APPROVE'));
   document.getElementById('btnRejectTrip').addEventListener('click', () => handleApprovalAction('REJECT'));
 
+  // End Trip Toggles & Confirmation
+  const btnEndTrip = document.getElementById('btnEndTripToggle');
+  if (btnEndTrip) {
+    btnEndTrip.addEventListener('click', () => {
+      if (!state.currentTrip) return;
+      if (state.currentTrip.status === 'ENDED') {
+        handleToggleEndTrip(state.currentTrip.id);
+      } else {
+        // Open confirmation modal
+        document.getElementById('endTripModalTitle').textContent = state.currentTrip.title;
+        const total = state.balances ? state.balances.totalTripSpent : 0;
+        const sym = state.currentTrip.currencySymbol || '₹';
+        document.getElementById('endTripModalTotalSpend').textContent = `${sym}${total.toLocaleString()}`;
+        document.getElementById('endTripModalMembersCount').textContent = `${(state.currentTrip.members || []).length} members`;
+        openModal('modalEndTripSummary');
+      }
+    });
+  }
+
+  const btnConfirmEnd = document.getElementById('btnConfirmEndTrip');
+  if (btnConfirmEnd) {
+    btnConfirmEnd.addEventListener('click', async () => {
+      document.getElementById('modalEndTripSummary').classList.add('hidden');
+      if (state.currentTrip) {
+        await handleToggleEndTrip(state.currentTrip.id);
+      }
+    });
+  }
+
+  const btnBannerReopen = document.getElementById('btnBannerReopenTrip');
+  if (btnBannerReopen) {
+    btnBannerReopen.addEventListener('click', () => {
+      if (state.currentTrip) handleToggleEndTrip(state.currentTrip.id);
+    });
+  }
+
+  // Live Location Capture
+  const btnCaptureLoc = document.getElementById('btnCaptureLocation');
+  if (btnCaptureLoc) {
+    btnCaptureLoc.addEventListener('click', captureLiveLocation);
+  }
+
+  const btnRemoveLoc = document.getElementById('btnRemoveLocation');
+  if (btnRemoveLoc) {
+    btnRemoveLoc.addEventListener('click', () => {
+      state.pendingLocation = null;
+      document.getElementById('expenseLocationBadge').classList.add('hidden');
+      document.getElementById('lblCaptureLocation').textContent = 'Capture Location';
+      document.getElementById('expLocationName').value = '';
+    });
+  }
+
+  // Receipt File Upload Dropzone
+  const dropzone = document.getElementById('receiptDropzone');
+  const fileInput = document.getElementById('expReceiptFileInput');
+  if (dropzone && fileInput) {
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.classList.add('border-roseaccent-500', 'bg-roseaccent-50');
+    });
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.classList.remove('border-roseaccent-500', 'bg-roseaccent-50');
+    });
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('border-roseaccent-500', 'bg-roseaccent-50');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleReceiptFileSelected(e.dataTransfer.files[0]);
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleReceiptFileSelected(e.target.files[0]);
+      }
+    });
+  }
+
+  const btnRemoveReceipt = document.getElementById('btnRemoveUploadedReceipt');
+  if (btnRemoveReceipt) {
+    btnRemoveReceipt.addEventListener('click', removeUploadedReceipt);
+  }
+
+  const btnPreviewReceipt = document.getElementById('btnPreviewUploadedReceipt');
+  if (btnPreviewReceipt) {
+    btnPreviewReceipt.addEventListener('click', () => {
+      if (state.pendingReceiptData) {
+        showReceiptLightbox({
+          title: 'Attached Receipt Preview',
+          subtitle: state.pendingReceiptData.name,
+          dataUrl: state.pendingReceiptData.dataUrl,
+          name: state.pendingReceiptData.name,
+          type: state.pendingReceiptData.type
+        });
+      }
+    });
+  }
+
+  // Admin Actions
+  const btnAdminAddUser = document.getElementById('btnAdminAddUserModal');
+  if (btnAdminAddUser) {
+    btnAdminAddUser.addEventListener('click', () => openModal('modalAddMember'));
+  }
+
+  const btnExportBackup = document.getElementById('btnAdminExportBackup');
+  if (btnExportBackup) {
+    btnExportBackup.addEventListener('click', handleAdminExportBackup);
+  }
+
+  const restoreInput = document.getElementById('adminRestoreFileInput');
+  if (restoreInput) {
+    restoreInput.addEventListener('change', handleAdminRestoreBackup);
+  }
+
+  const btnCleanReset = document.getElementById('btnAdminCleanReset');
+  if (btnCleanReset) {
+    btnCleanReset.addEventListener('click', handleAdminCleanReset);
+  }
+
   // All Expenses Scope toggle
   const scopeCurrentBtn = document.getElementById('scopeCurrentTripBtn');
   const scopeAllBtn = document.getElementById('scopeAllTripsBtn');
@@ -494,8 +787,7 @@ function setupEventListeners() {
       scopeAllBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-stone-800 shadow-sm transition';
       scopeCurrentBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold text-stone-500 hover:text-stone-800 transition';
       try {
-        const res = await fetch(`${API_BASE}/expenses`);
-        state.allTripsExpenses = await res.json();
+        state.allTripsExpenses = await api('/expenses');
       } catch (err) {
         console.error(err);
       }
@@ -540,6 +832,10 @@ function switchTab(tabId) {
 
   if (tabId === 'all-expenses') {
     renderAllExpensesTab();
+  } else if (tabId === 'admin') {
+    renderAdminTab();
+  } else if (tabId === 'members') {
+    renderMembersTab();
   }
 
   if (window.lucide) lucide.createIcons();
@@ -548,8 +844,10 @@ function switchTab(tabId) {
 // ==================== RENDERING LOGIC ====================
 
 function renderAll() {
-  if (!state.currentTrip) return;
-
+  if (!state.currentTrip) {
+    renderEmptyState();
+    return;
+  }
   renderTripHeader();
   renderTopStats();
   renderExpensesList();
@@ -557,7 +855,7 @@ function renderAll() {
   renderCorporateTab();
   renderMembersTab();
   renderAllExpensesTab();
-
+  if (state.activeTab === 'admin') renderAdminTab();
   if (window.lucide) lucide.createIcons();
 }
 
@@ -565,7 +863,7 @@ function renderTripSelector() {
   const sel = document.getElementById('tripSelector');
   sel.innerHTML = state.trips.map(t => `
     <option value="${t.id}" ${state.currentTrip && state.currentTrip.id === t.id ? 'selected' : ''}>
-      ${t.title} (${t.mode})
+      ${t.title} (${t.mode}) ${t.status === 'ENDED' ? '• [CLOSED]' : ''}
     </option>
   `).join('');
 }
@@ -587,7 +885,11 @@ function renderTripHeader() {
   // Status pill
   const statusPill = document.getElementById('tripStatusPill');
   const isCorporate = trip.mode === 'CORPORATE' || trip.mode === 'HYBRID';
-  if (isCorporate && trip.corporateConfig) {
+  
+  if (trip.status === 'ENDED') {
+    statusPill.textContent = 'ENDED / CLOSED';
+    statusPill.className = 'text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-800 border border-amber-300';
+  } else if (isCorporate && trip.corporateConfig) {
     statusPill.textContent = trip.corporateConfig.approvalStatus;
     statusPill.className = `text-xs px-2.5 py-0.5 rounded-full font-bold ${
       trip.corporateConfig.approvalStatus === 'APPROVED' ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' :
@@ -597,6 +899,21 @@ function renderTripHeader() {
   } else {
     statusPill.textContent = trip.status;
     statusPill.className = 'text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+  }
+
+  // End Trip Toggle button styling
+  const endBtnText = document.getElementById('btnEndTripToggleText');
+  const endIcon = document.getElementById('endTripIcon');
+  const endedBanner = document.getElementById('tripEndedBanner');
+
+  if (trip.status === 'ENDED') {
+    if (endBtnText) endBtnText.textContent = 'Reopen Trip';
+    if (endIcon) endIcon.setAttribute('data-lucide', 'unlock');
+    if (endedBanner) endedBanner.classList.remove('hidden');
+  } else {
+    if (endBtnText) endBtnText.textContent = 'End Trip';
+    if (endIcon) endIcon.setAttribute('data-lucide', 'lock');
+    if (endedBanner) endedBanner.classList.add('hidden');
   }
 
   // Hide or show Corporate tab button
@@ -625,69 +942,60 @@ function renderTopStats() {
     document.getElementById('budgetPercentLabel').textContent = 'No budget cap';
   }
   document.getElementById('budgetProgressBar').style.width = `${pct}%`;
-  document.getElementById('budgetProgressBar').className = pct > 90 ? 'bg-roseaccent-600 h-full rounded-full transition-all duration-500' : 'bg-emerald-500 h-full rounded-full transition-all duration-500';
-
-  // Card 2: Your Balance (Simulated active session for Alex)
-  const myData = state.balances ? state.balances.membersSummary.find(m => m.userId === state.currentUser) : null;
-  const balEl = document.getElementById('cardUserBalance');
-  const subEl = document.getElementById('cardBalanceSubtext');
-
-  if (myData) {
-    if (myData.netBalance > 0.01) {
-      balEl.textContent = `+${sym}${myData.netBalance.toLocaleString()}`;
-      balEl.className = 'text-2xl sm:text-3xl font-bold text-emerald-700';
-      subEl.innerHTML = `<i data-lucide="arrow-down-left" class="w-3.5 h-3.5 text-emerald-600"></i> You are owed this amount`;
-      subEl.className = 'text-xs text-emerald-700 font-medium mt-2 flex items-center gap-1';
-    } else if (myData.netBalance < -0.01) {
-      balEl.textContent = `-${sym}${Math.abs(myData.netBalance).toLocaleString()}`;
-      balEl.className = 'text-2xl sm:text-3xl font-bold text-roseaccent-800';
-      subEl.innerHTML = `<i data-lucide="arrow-up-right" class="w-3.5 h-3.5 text-roseaccent-600"></i> You owe this amount`;
-      subEl.className = 'text-xs text-roseaccent-700 font-medium mt-2 flex items-center gap-1';
-    } else {
-      balEl.textContent = `${sym}0.00`;
-      balEl.className = 'text-2xl sm:text-3xl font-bold text-stone-700';
-      subEl.innerHTML = `<i data-lucide="check-check" class="w-3.5 h-3.5 text-stone-500"></i> All settled up`;
-      subEl.className = 'text-xs text-stone-500 font-medium mt-2 flex items-center gap-1';
-    }
+  if (pct >= 90) {
+    document.getElementById('budgetProgressBar').className = 'bg-roseaccent-600 h-full rounded-full transition-all duration-500';
+  } else {
+    document.getElementById('budgetProgressBar').className = 'bg-emerald-500 h-full rounded-full transition-all duration-500';
   }
 
-  // Card 3: Members Count & Avatar Stack
-  const members = trip.members || [];
-  document.getElementById('cardMemberCount').textContent = members.length;
+  // Card 2: User Balance
+  let userNet = 0;
+  if (state.balances && state.balances.membersSummary) {
+    const summaryItem = state.balances.membersSummary.find(m => m.userId === state.currentUser);
+    if (summaryItem) userNet = summaryItem.netBalance;
+  }
+  
+  const balanceEl = document.getElementById('cardUserBalance');
+  const subtextEl = document.getElementById('cardBalanceSubtext');
+
+  if (userNet > 0.01) {
+    balanceEl.textContent = `+${sym}${userNet.toLocaleString()}`;
+    balanceEl.className = 'text-2xl sm:text-3xl font-bold text-emerald-700';
+    subtextEl.innerHTML = `<i data-lucide="arrow-down-left" class="w-3.5 h-3.5 text-emerald-600"></i> <span class="text-emerald-700">You are owed money</span>`;
+  } else if (userNet < -0.01) {
+    balanceEl.textContent = `-${sym}${Math.abs(userNet).toLocaleString()}`;
+    balanceEl.className = 'text-2xl sm:text-3xl font-bold text-roseaccent-800';
+    subtextEl.innerHTML = `<i data-lucide="arrow-up-right" class="w-3.5 h-3.5 text-roseaccent-600"></i> <span class="text-roseaccent-700">You owe other members</span>`;
+  } else {
+    balanceEl.textContent = `${sym}0.00`;
+    balanceEl.className = 'text-2xl sm:text-3xl font-bold text-stone-700';
+    subtextEl.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 text-stone-500"></i> <span class="text-stone-500">You are settled up</span>`;
+  }
+
+  // Card 3: Participants
+  const memberCount = (trip.members || []).length;
+  document.getElementById('cardMemberCount').textContent = memberCount;
   const avatarStack = document.getElementById('cardAvatarStack');
-  avatarStack.innerHTML = members.slice(0, 5).map(mId => {
-    const user = state.users.find(u => u.id === mId) || { name: mId, avatar: '' };
-    return `<img class="inline-block h-7 w-7 rounded-full ring-2 ring-white bg-cream-200" src="${user.avatar || 'https://api.dicebear.com/7.x/notionists/svg?seed=' + mId}" alt="${user.name}" title="${user.name}">`;
+  avatarStack.innerHTML = (trip.members || []).slice(0, 5).map(mId => {
+    const u = state.users.find(user => user.id === mId) || { name: mId, avatar: '' };
+    return `
+      <img src="${u.avatar || 'https://api.dicebear.com/7.x/notionists/svg?seed=' + mId}" 
+           alt="${u.name}" 
+           title="${u.name}" 
+           class="w-7 h-7 rounded-full border-2 border-white bg-cream-200">
+    `;
   }).join('');
 
-  // Card 4: Mode & Compliance Guard
-  const policyTitle = document.getElementById('cardPolicyTitle');
-  const policyDesc = document.getElementById('cardPolicyDesc');
-  const corpPill = document.getElementById('cardCorporateStatusPill');
+  // Card 4: Policy Title
+  const isCorporate = trip.mode === 'CORPORATE' || trip.mode === 'HYBRID';
+  document.getElementById('cardPolicyTitle').textContent = isCorporate ? 'Corporate Audit Guard' : 'Friends Outing Guard';
+  document.getElementById('cardPolicyDesc').textContent = isCorporate 
+    ? `Per-diem cap of ${sym}${(trip.corporateConfig && trip.corporateConfig.perDiemLimit) || 3000} & mandatory receipts enabled.`
+    : 'Greedy min-cost debt simplification enabled.';
 
-  if (trip.mode === 'CORPORATE') {
-    policyTitle.textContent = 'Corporate T&E Mode';
-    policyDesc.textContent = `Policy rule: Receipts mandatory ≥ ${sym}${trip.corporateConfig ? trip.corporateConfig.receiptRequiredThreshold : 500}`;
-    corpPill.classList.remove('hidden');
-    corpPill.innerHTML = `
-      <span class="inline-flex items-center gap-1 text-[11px] font-semibold text-roseaccent-800 bg-roseaccent-100 px-2 py-0.5 rounded-md border border-roseaccent-200">
-        <i data-lucide="check-circle-2" class="w-3 h-3 text-roseaccent-600"></i>
-        Cost Center: ${trip.corporateConfig ? trip.corporateConfig.costCenter : 'General'}
-      </span>
-    `;
-  } else if (trip.mode === 'HYBRID') {
-    policyTitle.textContent = 'Team Offsite Mode';
-    policyDesc.textContent = 'Blended company reimbursement & peer personal splits.';
-    corpPill.classList.add('hidden');
-  } else {
-    policyTitle.textContent = 'Friends Social Mode';
-    policyDesc.textContent = 'Direct peer-to-peer splitting with minimum debt transactions.';
-    corpPill.classList.add('hidden');
-  }
-
-  // Counts
+  // Badges in tabs
   document.getElementById('badgeExpenseCount').textContent = state.expenses.length;
-  const transfersCount = state.balances && state.balances.simplifiedTransfers ? state.balances.simplifiedTransfers.length : 0;
+  const transfersCount = (state.balances && state.balances.simplifiedTransfers) ? state.balances.simplifiedTransfers.length : 0;
   document.getElementById('badgeTransfersCount').textContent = transfersCount;
 }
 
@@ -738,7 +1046,7 @@ function renderExpensesList() {
       </div>
     ` : '';
 
-    const splitsSummary = exp.splits.map(s => {
+    const splitsSummary = (exp.splits || []).map(s => {
       const u = state.users.find(user => user.id === s.userId);
       return `<span class="inline-block px-2 py-0.5 rounded-md bg-cream-100 text-[11px] text-stone-600 font-medium">${u ? u.name.split(' ')[0] : s.userId}: ${sym}${s.amount}</span>`;
     }).join(' ');
@@ -754,10 +1062,20 @@ function renderExpensesList() {
               <div class="flex items-center gap-2 flex-wrap">
                 <h4 class="text-base font-bold text-stone-900">${exp.title}</h4>
                 <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-cream-200 text-stone-600">${exp.category}</span>
-                ${exp.receipt ? `
-                  <span class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                    <i data-lucide="file-check" class="w-3 h-3 text-emerald-600"></i> Receipt
-                  </span>
+                
+                ${exp.receipt || exp.receiptData ? `
+                  <button type="button" onclick="window.viewReceipt('${exp.id}')" class="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full hover:bg-emerald-100 transition cursor-pointer" title="View attached receipt">
+                    <i data-lucide="file-check" class="w-3 h-3 text-emerald-600"></i>
+                    <span>Receipt</span>
+                    <i data-lucide="external-link" class="w-2.5 h-2.5 text-emerald-500 ml-0.5"></i>
+                  </button>
+                ` : ''}
+
+                ${exp.location ? `
+                  <a href="https://www.google.com/maps?q=${exp.location.lat},${exp.location.lng}" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-[10px] font-semibold text-roseaccent-800 bg-roseaccent-50 border border-roseaccent-200 px-2 py-0.5 rounded-full hover:bg-roseaccent-100 transition" title="Open Google Maps Location">
+                    <i data-lucide="map-pin" class="w-3 h-3 text-roseaccent-600"></i>
+                    <span>${exp.location.name || 'Live GPS'}</span>
+                  </a>
                 ` : ''}
               </div>
               <p class="text-xs text-stone-500 mt-1">
@@ -770,7 +1088,7 @@ function renderExpensesList() {
           <div class="flex items-center gap-3">
             <div class="text-right">
               <div class="text-lg font-bold text-stone-900">${sym}${exp.amount.toLocaleString()}</div>
-              <div class="text-[11px] text-stone-400 font-medium">${exp.splits.length} participants</div>
+              <div class="text-[11px] text-stone-400 font-medium">${(exp.splits || []).length} participants</div>
             </div>
             <button onclick="handleDeleteExpense('${exp.id}')" title="Delete Expense" class="p-2 text-stone-400 hover:text-roseaccent-600 rounded-lg hover:bg-roseaccent-50 transition">
               <i data-lucide="trash-2" class="w-4 h-4"></i>
@@ -793,78 +1111,94 @@ function renderExpensesList() {
 }
 
 function renderBalancesTab() {
+  const container = document.getElementById('settlementsList');
+  const historyContainer = document.getElementById('historySettlementsList');
+  const membersList = document.getElementById('membersBalanceList');
+  const sym = state.currentTrip ? state.currentTrip.currencySymbol : '₹';
+
   if (!state.balances) return;
 
-  const sym = state.balances.currencySymbol || '₹';
-  const transfers = state.balances.simplifiedTransfers || [];
-  const settlementsContainer = document.getElementById('settlementsList');
+  const { simplifiedTransfers, completedSettlements, membersSummary } = state.balances;
 
-  if (transfers.length === 0) {
-    settlementsContainer.innerHTML = `
-      <div class="p-8 text-center bg-cream-50 rounded-2xl border border-cream-300">
-        <i data-lucide="sparkles" class="w-8 h-8 mx-auto text-emerald-600 mb-2"></i>
-        <div class="text-sm font-bold text-stone-800">Everyone is fully settled up!</div>
-        <p class="text-xs text-stone-500 mt-0.5">No outstanding debts remaining on this trip.</p>
+  // 1. Simplified transfers (Who pays whom)
+  if (simplifiedTransfers.length === 0) {
+    container.innerHTML = `
+      <div class="p-8 text-center text-stone-500 text-xs">
+        <div class="w-10 h-10 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-2">
+          <i data-lucide="check" class="w-5 h-5"></i>
+        </div>
+        <p class="font-bold text-stone-800 text-sm">All balances are completely settled!</p>
+        <p class="mt-0.5">No pending transfers needed between members.</p>
       </div>
     `;
   } else {
-    settlementsContainer.innerHTML = transfers.map(t => {
-      const fromUser = state.users.find(u => u.id === t.fromUser) || { name: t.fromName };
-      const toUser = state.users.find(u => u.id === t.toUser) || { name: t.toName, upiId: t.toUpiId };
+    container.innerHTML = simplifiedTransfers.map(tr => `
+      <div class="p-4 rounded-xl bg-white border border-cream-300 flex items-center justify-between gap-3 shadow-sm">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-full bg-roseaccent-50 text-roseaccent-700 flex items-center justify-center font-bold text-xs shrink-0">
+            ${tr.fromName[0]}
+          </div>
+          <div>
+            <div class="text-xs text-stone-500">
+              <strong class="text-stone-900">${tr.fromName}</strong> pays <strong class="text-stone-900">${tr.toName}</strong>
+            </div>
+            <div class="text-xs text-stone-400 mt-0.5">
+              ${tr.toUpiId ? `UPI: <span class="font-mono text-stone-600">${tr.toUpiId}</span>` : 'No UPI registered'}
+            </div>
+          </div>
+        </div>
 
+        <div class="flex items-center gap-3 shrink-0">
+          <div class="text-right">
+            <div class="text-sm font-bold text-roseaccent-800">${sym}${tr.amount}</div>
+          </div>
+
+          ${tr.toUpiId ? `
+            <a href="${tr.upiPaymentUrl}" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 transition">
+              <i data-lucide="send" class="w-3 h-3"></i>
+              <span>Pay</span>
+            </a>
+          ` : ''}
+
+          <button onclick="prefillSettleModal('${tr.fromUser}', '${tr.toUser}', ${tr.amount})" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-cream-100 hover:bg-cream-200 text-stone-700 transition" title="Mark as settled">
+            <i data-lucide="check" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // 2. Settlement History
+  if (completedSettlements.length === 0) {
+    historyContainer.innerHTML = '<div class="text-stone-400 italic py-2">No settlements recorded yet.</div>';
+  } else {
+    historyContainer.innerHTML = completedSettlements.map(stl => {
+      const fromU = state.users.find(u => u.id === stl.fromUser) || { name: stl.fromUser };
+      const toU = state.users.find(u => u.id === stl.toUser) || { name: stl.toUser };
+      const dt = new Date(stl.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
       return `
-        <div class="p-4 rounded-2xl bg-white border border-cream-300 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:border-roseaccent-200 transition">
-          <div class="flex items-center gap-3">
-            <div class="w-9 h-9 rounded-full bg-roseaccent-100 text-roseaccent-700 flex items-center justify-center font-bold text-xs shrink-0">
-              <i data-lucide="send" class="w-4 h-4"></i>
-            </div>
-            <div>
-              <div class="text-sm font-bold text-stone-900">
-                <span>${fromUser.name}</span>
-                <span class="text-xs font-normal text-stone-500 mx-1">pays</span>
-                <span class="text-roseaccent-800">${toUser.name}</span>
-              </div>
-              <p class="text-xs text-stone-400">UPI Handle: ${toUser.upiId || 'Not registered'}</p>
-            </div>
+        <div class="flex items-center justify-between py-2 border-b border-cream-200 last:border-0">
+          <div>
+            <strong class="text-stone-800">${fromU.name}</strong> paid <strong class="text-stone-800">${toU.name}</strong>
+            <span class="text-[10px] text-stone-400 ml-1">(${stl.reference || 'Manual Settle'})</span>
           </div>
-
-          <div class="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-cream-200">
-            <span class="text-base font-extrabold text-stone-900">${sym}${t.amount.toLocaleString()}</span>
-            
-            <div class="flex items-center gap-2">
-              ${t.upiPaymentUrl ? `
-                <a href="${t.upiPaymentUrl}" target="_blank" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-sm transition">
-                  <i data-lucide="smartphone" class="w-3.5 h-3.5"></i>
-                  <span>Pay UPI</span>
-                </a>
-              ` : ''}
-
-              <button onclick="prefillSettleModal('${t.fromUser}', '${t.toUser}', ${t.amount})" class="btn-rose-subtle px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1">
-                <i data-lucide="check" class="w-3.5 h-3.5"></i>
-                <span>Mark Paid</span>
-              </button>
-            </div>
-          </div>
+          <div class="font-bold text-stone-900">${sym}${stl.amount} <span class="text-[10px] font-normal text-stone-400 ml-1">${dt}</span></div>
         </div>
       `;
     }).join('');
   }
 
-  // Right column: Individual Member Shares Breakdown
-  const membersBalanceContainer = document.getElementById('membersBalanceList');
-  const summary = state.balances.membersSummary || [];
-
-  membersBalanceContainer.innerHTML = summary.map(m => {
+  // 3. Individual member shares & net balances
+  membersList.innerHTML = membersSummary.map(m => {
     const isCreditor = m.netBalance > 0.01;
     const isDebtor = m.netBalance < -0.01;
-
     return `
       <div class="p-3.5 rounded-xl bg-cream-50 border border-cream-200 flex items-center justify-between">
         <div class="flex items-center gap-2.5">
-          <img src="${m.avatar || 'https://api.dicebear.com/7.x/notionists/svg?seed=' + m.userId}" class="w-8 h-8 rounded-full bg-cream-200" alt="${m.name}">
+          <img src="${m.avatar || 'https://api.dicebear.com/7.x/notionists/svg?seed=' + m.userId}" class="w-8 h-8 rounded-full bg-white">
           <div>
-            <div class="text-xs font-bold text-stone-800">${m.name}</div>
-            <div class="text-[10px] text-stone-500">Paid: ${sym}${m.totalPaid} • Share: ${sym}${m.totalShare}</div>
+            <div class="text-xs font-bold text-stone-900">${m.name}</div>
+            <div class="text-[10px] text-stone-400">Paid: ${sym}${m.totalPaid} • Share: ${sym}${m.totalShare}</div>
           </div>
         </div>
 
@@ -872,33 +1206,13 @@ function renderBalancesTab() {
           <div class="text-xs font-bold ${isCreditor ? 'text-emerald-700' : isDebtor ? 'text-roseaccent-700' : 'text-stone-500'}">
             ${isCreditor ? '+' : ''}${sym}${m.netBalance}
           </div>
-          <span class="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-            isCreditor ? 'bg-emerald-100 text-emerald-800' : isDebtor ? 'bg-roseaccent-100 text-roseaccent-800' : 'bg-cream-200 text-stone-600'
-          }">
+          <div class="text-[9px] uppercase font-semibold text-stone-400">
             ${isCreditor ? 'Gets back' : isDebtor ? 'Owes' : 'Settled'}
-          </span>
+          </div>
         </div>
       </div>
     `;
   }).join('');
-
-  // Settlement History
-  const historyContainer = document.getElementById('historySettlementsList');
-  const history = state.balances.completedSettlements || [];
-  if (history.length === 0) {
-    historyContainer.innerHTML = `<p class="text-stone-400 italic">No manual settlements logged yet.</p>`;
-  } else {
-    historyContainer.innerHTML = history.map(h => {
-      const fromU = state.users.find(u => u.id === h.fromUser) || { name: h.fromUser };
-      const toU = state.users.find(u => u.id === h.toUser) || { name: h.toUser };
-      return `
-        <div class="p-2.5 rounded-lg bg-cream-50 border border-cream-200 flex items-center justify-between">
-          <span><strong>${fromU.name}</strong> paid <strong>${toU.name}</strong> (${h.reference || 'Settlement'})</span>
-          <span class="font-bold text-emerald-700">${sym}${h.amount}</span>
-        </div>
-      `;
-    }).join('');
-  }
 
   if (window.lucide) lucide.createIcons();
 }
@@ -910,52 +1224,63 @@ function renderCorporateTab() {
   const cfg = trip.corporateConfig || {};
   const sym = trip.currencySymbol || '₹';
 
+  // Populate config summary
   document.getElementById('corpCostCenter').textContent = cfg.costCenter || 'N/A';
   document.getElementById('corpPerDiemLimit').textContent = `${sym}${(cfg.perDiemLimit || 3000).toLocaleString()} / day`;
-  document.getElementById('corpReceiptThreshold').textContent = `Expenses ≥ ${sym}${cfg.receiptRequiredThreshold || 500}`;
+  document.getElementById('corpReceiptThreshold').textContent = `Expenses ≥ ${sym}${(cfg.receiptRequiredThreshold || 500).toLocaleString()}`;
 
+  // Status Badge
   const badge = document.getElementById('corpApprovalStatusBadge');
-  badge.textContent = cfg.approvalStatus || 'DRAFT';
+  const status = cfg.approvalStatus || 'PENDING';
+  badge.textContent = status;
   badge.className = `text-xs px-2.5 py-1 rounded-full font-bold ${
-    cfg.approvalStatus === 'APPROVED' ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' :
-    cfg.approvalStatus === 'REJECTED' ? 'bg-roseaccent-100 text-roseaccent-800 border border-roseaccent-300' :
+    status === 'APPROVED' ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' :
+    status === 'REJECTED' ? 'bg-roseaccent-100 text-roseaccent-800 border border-roseaccent-300' :
     'bg-amber-100 text-amber-800 border border-amber-300'
   }`;
 
-  // Collect all policy violations across all expenses
+  // Aggregate policy violations across all trip expenses
   const allViolations = [];
   state.expenses.forEach(e => {
-    if (e.policyFlags && e.policyFlags.length > 0) {
-      e.policyFlags.forEach(f => {
-        allViolations.push({
-          expenseTitle: e.title,
-          expenseAmount: e.amount,
-          code: f.code,
-          message: f.message
-        });
+    (e.policyFlags || []).forEach(f => {
+      allViolations.push({
+        expenseTitle: e.title,
+        amount: e.amount,
+        payer: (state.users.find(u => u.id === e.paidBy) || {}).name || e.paidBy,
+        date: e.date,
+        ...f
       });
-    }
+    });
   });
 
   const violationsContainer = document.getElementById('corpViolationsList');
+  const badgeViolations = document.getElementById('badgePolicyViolations');
+
   if (allViolations.length === 0) {
+    badgeViolations.classList.add('hidden');
     violationsContainer.innerHTML = `
-      <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
-        <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i>
-        <span>All expenses are 100% compliant with company travel policies! Ready for reimbursement approval.</span>
+      <div class="p-6 text-center text-xs text-stone-500 bg-white rounded-xl border border-cream-200">
+        <i data-lucide="shield-check" class="w-8 h-8 text-emerald-600 mx-auto mb-2"></i>
+        <p class="font-bold text-stone-800 text-sm">100% Policy Compliant</p>
+        <p class="mt-0.5">All corporate travel expenses satisfy per-diem limits and have verified receipt attachments.</p>
       </div>
     `;
   } else {
+    badgeViolations.classList.remove('hidden');
+    badgeViolations.textContent = allViolations.length;
     violationsContainer.innerHTML = allViolations.map(v => `
-      <div class="p-3 rounded-xl bg-roseaccent-50 border border-roseaccent-200 text-xs flex items-start justify-between gap-3">
-        <div class="flex items-start gap-2">
-          <i data-lucide="alert-octagon" class="w-4 h-4 text-roseaccent-600 shrink-0 mt-0.5"></i>
+      <div class="p-3.5 rounded-xl bg-white border border-roseaccent-200 flex items-start justify-between gap-3 text-xs">
+        <div class="flex items-start gap-2.5">
+          <div class="w-7 h-7 rounded-lg bg-roseaccent-100 text-roseaccent-700 flex items-center justify-center shrink-0 mt-0.5">
+            <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+          </div>
           <div>
-            <div class="font-bold text-roseaccent-900">${v.expenseTitle} (${sym}${v.expenseAmount})</div>
-            <div class="text-stone-600 mt-0.5">${v.message}</div>
+            <div class="font-bold text-stone-900">${v.expenseTitle} (${sym}${v.amount})</div>
+            <div class="text-stone-500 mt-0.5">${v.message}</div>
+            <div class="text-[10px] text-stone-400 mt-0.5">Reported by ${v.payer} on ${v.date}</div>
           </div>
         </div>
-        <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-roseaccent-200 text-roseaccent-900 shrink-0">
+        <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-roseaccent-100 text-roseaccent-800 uppercase shrink-0">
           ${v.code}
         </span>
       </div>
@@ -967,38 +1292,65 @@ function renderCorporateTab() {
 
 function renderMembersTab() {
   const trip = state.currentTrip;
+  if (!trip) return;
   const sym = trip.currencySymbol || '₹';
   const grid = document.getElementById('membersGrid');
   const summary = state.balances ? state.balances.membersSummary : [];
 
   grid.innerHTML = (trip.members || []).map(mId => {
-    const user = state.users.find(u => u.id === mId) || { id: mId, name: mId, email: '', upiId: '' };
+    const user = state.users.find(u => u.id === mId) || { id: mId, name: mId, email: '', phone: '', upiId: '' };
     const memberStats = summary.find(s => s.userId === mId) || { totalPaid: 0, totalShare: 0, netBalance: 0 };
+    const cleanPhone = user.phone ? user.phone.replace(/[^0-9]/g, '') : '';
 
     return `
-      <div class="p-4 rounded-2xl bg-white border border-cream-300 flex flex-col justify-between">
-        <div class="flex items-center gap-3 mb-3">
-          <img src="${user.avatar || 'https://api.dicebear.com/7.x/notionists/svg?seed=' + user.id}" class="w-11 h-11 rounded-full bg-cream-100" alt="${user.name}">
-          <div>
-            <div class="text-sm font-bold text-stone-900">${user.name}</div>
-            <div class="text-xs text-stone-400">${user.email}</div>
-            <div class="text-[11px] text-roseaccent-700 font-medium">${user.upiId ? 'UPI: ' + user.upiId : 'No UPI'}</div>
+      <div class="p-4 rounded-2xl bg-white border border-cream-300 flex flex-col justify-between shadow-sm">
+        <div>
+          <div class="flex items-center gap-3 mb-3">
+            <img src="${user.avatar || 'https://api.dicebear.com/7.x/notionists/svg?seed=' + user.id}" class="w-11 h-11 rounded-full bg-cream-100 shrink-0" alt="${user.name}">
+            <div class="overflow-hidden">
+              <div class="text-sm font-bold text-stone-900 truncate">${user.name}</div>
+              <div class="text-xs text-stone-400 truncate">${user.email || 'No email registered'}</div>
+              <div class="text-[11px] text-stone-500 font-medium">${user.phone ? '📞 ' + user.phone : 'No phone registered'}</div>
+            </div>
+          </div>
+
+          <div class="pt-2.5 border-t border-cream-200 grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <span class="text-stone-400 text-[10px] uppercase font-semibold">Total Paid</span>
+              <div class="font-bold text-stone-800">${sym}${memberStats.totalPaid}</div>
+            </div>
+            <div>
+              <span class="text-stone-400 text-[10px] uppercase font-semibold">Fair Share</span>
+              <div class="font-bold text-stone-800">${sym}${memberStats.totalShare}</div>
+            </div>
           </div>
         </div>
 
-        <div class="pt-3 border-t border-cream-200 grid grid-cols-2 gap-2 text-xs">
-          <div>
-            <span class="text-stone-400 text-[10px] uppercase font-semibold">Total Paid</span>
-            <div class="font-bold text-stone-800">${sym}${memberStats.totalPaid}</div>
-          </div>
-          <div>
-            <span class="text-stone-400 text-[10px] uppercase font-semibold">Fair Share</span>
-            <div class="font-bold text-stone-800">${sym}${memberStats.totalShare}</div>
-          </div>
+        <!-- 1-Click WhatsApp, Call & Copy UPI shortcuts -->
+        <div class="mt-3.5 pt-3 border-t border-cream-200 flex items-center gap-1.5 flex-wrap">
+          ${cleanPhone ? `
+            <a href="https://wa.me/${cleanPhone}" target="_blank" rel="noopener" class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 flex items-center gap-1 transition" title="Chat on WhatsApp">
+              <i data-lucide="message-circle" class="w-3 h-3 text-emerald-600"></i>
+              <span>WhatsApp</span>
+            </a>
+            <a href="tel:${cleanPhone}" class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-cream-100 text-stone-700 hover:bg-cream-200 flex items-center gap-1 transition" title="Call directly">
+              <i data-lucide="phone" class="w-3 h-3 text-stone-600"></i>
+              <span>Call</span>
+            </a>
+          ` : ''}
+
+          ${user.upiId ? `
+            <button onclick="window.copyToClipboard('${user.upiId}', 'UPI ID')" class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-roseaccent-50 text-roseaccent-800 border border-roseaccent-200 hover:bg-roseaccent-100 flex items-center gap-1 transition" title="Copy UPI address">
+              <i data-lucide="copy" class="w-3 h-3 text-roseaccent-600"></i>
+              <span>Copy UPI</span>
+            </button>
+          ` : ''}
         </div>
       </div>
     `;
   }).join('');
+
+  if (window.lucide) lucide.createIcons();
 }
 
 function renderAllExpensesTab() {
@@ -1126,10 +1478,11 @@ function renderAllExpensesTab() {
             <td class="py-3 px-3.5 whitespace-nowrap text-stone-600 font-medium">${e.date}</td>
             <td class="py-3 px-3.5">
               <div class="font-bold text-stone-900">${e.title}</div>
-              <div class="text-[10px] text-stone-400 flex items-center gap-1.5 mt-0.5">
+              <div class="text-[10px] text-stone-400 flex items-center gap-1.5 mt-0.5 flex-wrap">
                 ${tripObj ? `<span class="font-semibold text-roseaccent-700">${tripObj.title}</span> • ` : ''}
-                ${e.notes ? `<span>"${e.notes}"</span>` : '<span>No notes</span>'}
-                ${e.receipt ? `<span class="text-emerald-700 font-medium">📎 ${e.receipt}</span>` : ''}
+                ${e.location ? `<a href="https://www.google.com/maps?q=${e.location.lat},${e.location.lng}" target="_blank" rel="noopener" class="text-roseaccent-700 hover:underline inline-flex items-center gap-0.5"><i data-lucide="map-pin" class="w-2.5 h-2.5"></i> ${e.location.name || 'GPS'}</a> • ` : ''}
+                ${e.notes ? `<span>"${e.notes}"</span> • ` : ''}
+                ${e.receipt || e.receiptData ? `<button type="button" onclick="window.viewReceipt('${e.id}')" class="text-emerald-700 hover:underline font-semibold inline-flex items-center gap-0.5 cursor-pointer">📎 View Receipt</button>` : '<span class="text-stone-300">No Receipt</span>'}
               </div>
             </td>
             <td class="py-3 px-3.5 whitespace-nowrap">
@@ -1198,6 +1551,139 @@ function renderAllExpensesTab() {
   if (window.lucide) lucide.createIcons();
 }
 
+// ==================== ADMIN PANEL RENDERING ====================
+
+async function renderAdminTab() {
+  try {
+    const [stats, auditLogs, settings] = await Promise.all([
+      api('/admin/stats'),
+      api('/admin/audit-logs'),
+      api('/admin/settings')
+    ]);
+
+    state.adminStats = stats;
+    state.auditLogs = auditLogs || [];
+    state.adminSettings = settings;
+
+    // Stat cards
+    document.getElementById('adminStatTotalTrips').textContent = stats.totalTrips || 0;
+    document.getElementById('adminStatActiveTrips').textContent = `${stats.activeTrips || 0} Active • ${stats.endedTrips || 0} Concluded`;
+    document.getElementById('adminStatTotalUsers').textContent = stats.totalUsers || 0;
+    document.getElementById('adminStatTotalExpenses').textContent = stats.totalExpenses || 0;
+    document.getElementById('adminStatTotalVolume').textContent = `₹${(stats.totalVolume || 0).toLocaleString()}`;
+
+    // Users Table
+    const usersTbody = document.getElementById('adminUsersTableBody');
+    usersTbody.innerHTML = state.users.map(u => {
+      const cleanPhone = u.phone ? u.phone.replace(/[^0-9]/g, '') : '';
+      return `
+        <tr class="hover:bg-cream-50/70 transition">
+          <td class="py-3 px-3.5 flex items-center gap-2.5">
+            <img src="${u.avatar || 'https://api.dicebear.com/7.x/notionists/svg?seed=' + u.id}" class="w-7 h-7 rounded-full bg-cream-100">
+            <span class="font-bold text-stone-900">${u.name}</span>
+          </td>
+          <td class="py-3 px-3.5 text-stone-600">${u.email || '-'}</td>
+          <td class="py-3 px-3.5">
+            ${u.phone ? `
+              <div class="flex items-center gap-1.5">
+                <span class="font-medium text-stone-800">${u.phone}</span>
+                <a href="https://wa.me/${cleanPhone}" target="_blank" rel="noopener" class="text-emerald-600 hover:text-emerald-700" title="Chat on WhatsApp">
+                  <i data-lucide="message-circle" class="w-3.5 h-3.5"></i>
+                </a>
+              </div>
+            ` : '<span class="text-stone-400 italic">None</span>'}
+          </td>
+          <td class="py-3 px-3.5 font-mono text-stone-700">${u.upiId || '-'}</td>
+          <td class="py-3 px-3.5">
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+              u.role === 'ADMIN' ? 'bg-purple-100 text-purple-800' : 'bg-cream-200 text-stone-700'
+            }">
+              ${u.role || 'EMPLOYEE'}
+            </span>
+          </td>
+          <td class="py-3 px-3.5 text-right space-x-1 whitespace-nowrap">
+            <button onclick="window.openEditUserModal('${u.id}')" class="px-2 py-1 rounded-lg text-xs font-semibold bg-cream-100 hover:bg-cream-200 text-stone-700 transition" title="Edit User">
+              <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+            </button>
+            <button onclick="window.handleDeleteUser('${u.id}')" class="px-2 py-1 rounded-lg text-xs font-semibold bg-roseaccent-50 hover:bg-roseaccent-100 text-roseaccent-700 transition" title="Delete User">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    // Trips Table
+    const tripsTbody = document.getElementById('adminTripsTableBody');
+    tripsTbody.innerHTML = state.trips.map(t => `
+      <tr class="hover:bg-cream-50/70 transition">
+        <td class="py-3 px-3.5 font-bold text-stone-900">${t.title}</td>
+        <td class="py-3 px-3.5">
+          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+            t.mode === 'CORPORATE' ? 'bg-roseaccent-100 text-roseaccent-800' : t.mode === 'HYBRID' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+          }">
+            ${t.mode}
+          </span>
+        </td>
+        <td class="py-3 px-3.5 text-stone-600">${t.destination || '-'}</td>
+        <td class="py-3 px-3.5">
+          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+            t.status === 'ENDED' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+          }">
+            ${t.status}
+          </span>
+        </td>
+        <td class="py-3 px-3.5 text-stone-600">${(t.members || []).length} members</td>
+        <td class="py-3 px-3.5 text-right space-x-1.5 whitespace-nowrap">
+          <button onclick="selectTrip('${t.id}')" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white border border-cream-300 text-stone-700 hover:bg-cream-50 transition">
+            Switch
+          </button>
+          <button onclick="window.handleToggleEndTrip('${t.id}')" class="px-2.5 py-1 rounded-lg text-xs font-semibold ${
+            t.status === 'ENDED' ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'bg-cream-100 text-stone-700 hover:bg-cream-200'
+          } transition">
+            ${t.status === 'ENDED' ? 'Reopen' : 'End'}
+          </button>
+          <button onclick="window.handleDeleteTrip('${t.id}')" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-roseaccent-50 hover:bg-roseaccent-100 text-roseaccent-700 transition" title="Delete Trip">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          </button>
+        </td>
+      </tr>
+    `).join('');
+
+    // Settings
+    if (settings) {
+      document.getElementById('adminSettingPerDiem').value = settings.defaultPerDiemLimit || 3000;
+      document.getElementById('adminSettingReceiptThreshold').value = settings.defaultReceiptRequiredThreshold || 500;
+    }
+
+    // Audit Logs
+    const auditList = document.getElementById('adminAuditLogsList');
+    if (auditLogs.length === 0) {
+      auditList.innerHTML = '<div class="text-stone-400 italic text-xs py-3 text-center">No audit log entries recorded yet.</div>';
+    } else {
+      auditList.innerHTML = auditLogs.map(l => {
+        const timeStr = new Date(l.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const dateStr = new Date(l.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
+        return `
+          <div class="flex items-center justify-between py-2 border-b border-cream-100 last:border-0 text-xs">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider uppercase bg-cream-100 text-stone-700 font-mono">
+                ${l.action}
+              </span>
+              <span class="text-stone-800 font-medium">${l.details}</span>
+            </div>
+            <span class="text-[10px] text-stone-400 whitespace-nowrap">${dateStr} ${timeStr}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    console.error('Failed to render admin panel:', err);
+  }
+}
+
 // ==================== MODAL OPERATIONS ====================
 
 function openModal(id) {
@@ -1213,8 +1699,20 @@ function openAddExpenseModal() {
     return;
   }
 
+  if (trip.status === 'ENDED') {
+    showToast('This trip is concluded and locked. Reopen the trip in order to record new expenses.', 'warning');
+    return;
+  }
+
   document.getElementById('modalCurrencySymbol').textContent = trip.currencySymbol || '₹';
   document.getElementById('expDate').value = new Date().toISOString().split('T')[0];
+
+  // Reset file upload dropzone & location
+  removeUploadedReceipt();
+  state.pendingLocation = null;
+  document.getElementById('expenseLocationBadge').classList.add('hidden');
+  document.getElementById('lblCaptureLocation').textContent = 'Capture Location';
+  document.getElementById('expLocationName').value = '';
 
   // Populate Paid By dropdown
   const paidBySelect = document.getElementById('expPaidBy');
@@ -1286,6 +1784,145 @@ window.prefillSettleModal = function(fromUser, toUser, amount) {
   document.getElementById('settleReference').value = 'Settled via UPI / Cash';
 };
 
+// ==================== RECEIPT FILE & LIGHTBOX ====================
+
+function handleReceiptFileSelected(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    state.pendingReceiptData = {
+      name: file.name,
+      size: (file.size / 1024).toFixed(1) + ' KB',
+      type: file.type,
+      dataUrl: e.target.result
+    };
+
+    document.getElementById('receiptDropzone').classList.add('hidden');
+    document.getElementById('receiptPreviewBox').classList.remove('hidden');
+    document.getElementById('receiptFileName').textContent = file.name;
+    document.getElementById('receiptFileSize').textContent = state.pendingReceiptData.size;
+
+    const thumbImg = document.getElementById('receiptThumbnailImg');
+    const fileIcon = document.getElementById('receiptFileIcon');
+
+    if (file.type.startsWith('image/')) {
+      thumbImg.src = e.target.result;
+      thumbImg.classList.remove('hidden');
+      fileIcon.classList.add('hidden');
+    } else {
+      thumbImg.classList.add('hidden');
+      fileIcon.classList.remove('hidden');
+    }
+
+    if (window.lucide) lucide.createIcons();
+    showToast(`Receipt attached: ${file.name}`, 'info');
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeUploadedReceipt() {
+  state.pendingReceiptData = null;
+  const fileInput = document.getElementById('expReceiptFileInput');
+  if (fileInput) fileInput.value = '';
+  const dropzone = document.getElementById('receiptDropzone');
+  const previewBox = document.getElementById('receiptPreviewBox');
+  if (dropzone) dropzone.classList.remove('hidden');
+  if (previewBox) previewBox.classList.add('hidden');
+}
+
+window.viewReceipt = function(expenseId) {
+  const exp = state.expenses.find(e => e.id === expenseId) || (state.allTripsExpenses || []).find(e => e.id === expenseId);
+  if (!exp) return;
+
+  const dataUrl = exp.receiptData || (exp.receipt && exp.receipt.startsWith('data:') ? exp.receipt : null);
+  const name = exp.receipt || 'Receipt';
+  const payer = state.users.find(u => u.id === exp.paidBy) || { name: exp.paidBy };
+  const sym = exp.currency === 'USD' ? '$' : '₹';
+
+  showReceiptLightbox({
+    title: exp.title,
+    subtitle: `Paid by ${payer.name} • ${sym}${exp.amount} on ${exp.date}`,
+    dataUrl,
+    name,
+    type: dataUrl && dataUrl.startsWith('data:application/pdf') ? 'application/pdf' : 'image'
+  });
+};
+
+function showReceiptLightbox({ title, subtitle, dataUrl, name, type }) {
+  document.getElementById('receiptViewerTitle').textContent = title;
+  document.getElementById('receiptViewerSubtitle').textContent = subtitle;
+
+  const imgEl = document.getElementById('receiptViewerImage');
+  const pdfFallback = document.getElementById('receiptViewerPdfFallback');
+  const downloadBtn = document.getElementById('receiptDownloadBtn');
+  const pdfLink = document.getElementById('receiptPdfOpenLink');
+
+  if (dataUrl) {
+    downloadBtn.href = dataUrl;
+    downloadBtn.download = name || 'receipt_document';
+    pdfLink.href = dataUrl;
+
+    if (type && type.includes('pdf')) {
+      imgEl.classList.add('hidden');
+      pdfFallback.classList.remove('hidden');
+    } else {
+      imgEl.src = dataUrl;
+      imgEl.classList.remove('hidden');
+      pdfFallback.classList.add('hidden');
+    }
+  } else {
+    // Simulated receipt fallback
+    imgEl.src = `https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&w=800&q=80`;
+    imgEl.classList.remove('hidden');
+    pdfFallback.classList.add('hidden');
+    downloadBtn.href = imgEl.src;
+    downloadBtn.download = 'mock_receipt.jpg';
+  }
+
+  openModal('modalReceiptViewer');
+}
+
+// ==================== LIVE LOCATION CAPTURE ====================
+
+function captureLiveLocation() {
+  if (!navigator.geolocation) {
+    showToast('Geolocation is not supported by your browser', 'error');
+    return;
+  }
+
+  const lbl = document.getElementById('lblCaptureLocation');
+  lbl.textContent = 'Locating GPS...';
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const lat = Math.round(pos.coords.latitude * 10000) / 10000;
+      const lng = Math.round(pos.coords.longitude * 10000) / 10000;
+
+      state.pendingLocation = {
+        lat,
+        lng,
+        name: document.getElementById('expLocationName').value || `GPS (${lat}, ${lng})`
+      };
+
+      document.getElementById('expenseLocationBadge').classList.remove('hidden');
+      document.getElementById('locationBadgeText').textContent = `Coordinates: ${lat}, ${lng}`;
+      lbl.textContent = 'GPS Tagged';
+
+      if (!document.getElementById('expLocationName').value) {
+        document.getElementById('expLocationName').value = 'Current Geotagged Location';
+      }
+
+      showToast('Live GPS coordinates attached!', 'success');
+      if (window.lucide) lucide.createIcons();
+    },
+    (err) => {
+      lbl.textContent = 'Capture Location';
+      showToast(`Could not retrieve GPS: ${err.message}`, 'warning');
+    },
+    { enableHighAccuracy: true, timeout: 8000 }
+  );
+}
+
 // ==================== FORM ACTIONS ====================
 
 async function handleAddExpense(e) {
@@ -1293,10 +1930,30 @@ async function handleAddExpense(e) {
   const trip = state.currentTrip;
   if (!trip) return;
 
+  if (trip.status === 'ENDED') {
+    showToast('This trip is ended. Reopen the trip in order to record new expenses.', 'warning');
+    return;
+  }
+
   const checkedMembers = Array.from(document.querySelectorAll('input[name="splitUser"]:checked')).map(cb => cb.value);
   if (checkedMembers.length === 0) {
     showToast('Select at least one member to share the expense', 'error');
     return;
+  }
+
+  let locationPayload = null;
+  if (state.pendingLocation) {
+    locationPayload = {
+      lat: state.pendingLocation.lat,
+      lng: state.pendingLocation.lng,
+      name: document.getElementById('expLocationName').value || state.pendingLocation.name
+    };
+  } else if (document.getElementById('expLocationName').value.trim()) {
+    locationPayload = {
+      lat: 19.076,
+      lng: 72.8777,
+      name: document.getElementById('expLocationName').value.trim()
+    };
   }
 
   const payload = {
@@ -1307,7 +1964,9 @@ async function handleAddExpense(e) {
     date: document.getElementById('expDate').value,
     splitType: 'EQUAL',
     splits: checkedMembers,
-    receipt: document.getElementById('expReceipt').value,
+    receipt: state.pendingReceiptData ? state.pendingReceiptData.name : null,
+    receiptData: state.pendingReceiptData ? state.pendingReceiptData.dataUrl : null,
+    location: locationPayload,
     isReimbursable: trip.mode === 'CORPORATE'
   };
 
@@ -1320,6 +1979,8 @@ async function handleAddExpense(e) {
 
     document.getElementById('modalAddExpense').classList.add('hidden');
     document.getElementById('formAddExpense').reset();
+    removeUploadedReceipt();
+    state.pendingLocation = null;
 
     showToast(`Recorded "${created.title}" successfully!`, 'success');
     if (created.policyFlags && created.policyFlags.length > 0) {
@@ -1412,12 +2073,13 @@ async function handleSettlePayment(e) {
 async function handleAddMember(e) {
   e.preventDefault();
   const trip = state.currentTrip;
-  if (!trip) return;
 
   const payload = {
     name: document.getElementById('newMemberName').value,
     email: document.getElementById('newMemberEmail').value,
-    upiId: document.getElementById('newMemberUpi').value
+    phone: document.getElementById('newMemberPhone') ? document.getElementById('newMemberPhone').value : '',
+    upiId: document.getElementById('newMemberUpi').value,
+    role: document.getElementById('newMemberRole') ? document.getElementById('newMemberRole').value : 'EMPLOYEE'
   };
 
   try {
@@ -1429,7 +2091,7 @@ async function handleAddMember(e) {
 
     if (newUser) {
       state.users.push(newUser);
-      if (!trip.members.includes(newUser.id)) {
+      if (trip && !trip.members.includes(newUser.id)) {
         trip.members.push(newUser.id);
       }
     }
@@ -1437,10 +2099,193 @@ async function handleAddMember(e) {
     document.getElementById('modalAddMember').classList.add('hidden');
     document.getElementById('formAddMember').reset();
 
-    showToast(`Added ${newUser.name} to the group!`, 'success');
-    await selectTrip(trip.id);
+    showToast(`Added ${newUser.name} successfully!`, 'success');
+    if (trip) await selectTrip(trip.id);
+    if (state.activeTab === 'admin') renderAdminTab();
   } catch (err) {
     showToast('Failed to add member', 'error');
+  }
+}
+
+window.openEditUserModal = function(userId) {
+  const user = state.users.find(u => u.id === userId);
+  if (!user) return;
+
+  document.getElementById('editUserId').value = user.id;
+  document.getElementById('editUserName').value = user.name || '';
+  document.getElementById('editUserEmail').value = user.email || '';
+  document.getElementById('editUserPhone').value = user.phone || '';
+  document.getElementById('editUserUpi').value = user.upiId || '';
+  document.getElementById('editUserRole').value = user.role || 'EMPLOYEE';
+
+  openModal('modalEditUser');
+};
+
+async function handleEditUser(e) {
+  e.preventDefault();
+  const userId = document.getElementById('editUserId').value;
+  const payload = {
+    name: document.getElementById('editUserName').value,
+    email: document.getElementById('editUserEmail').value,
+    phone: document.getElementById('editUserPhone').value,
+    upiId: document.getElementById('editUserUpi').value,
+    role: document.getElementById('editUserRole').value
+  };
+
+  try {
+    const updated = await api(`/users/${userId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const idx = state.users.findIndex(u => u.id === userId);
+    if (idx !== -1) state.users[idx] = updated;
+
+    document.getElementById('modalEditUser').classList.add('hidden');
+    showToast(`Updated ${updated.name} successfully!`, 'success');
+    if (state.activeTab === 'admin') renderAdminTab();
+    if (state.currentTrip) renderAll();
+  } catch (err) {
+    showToast('Failed to update user', 'error');
+  }
+}
+
+window.handleDeleteUser = async function(userId) {
+  const user = state.users.find(u => u.id === userId);
+  if (!confirm(`Are you sure you want to remove ${user ? user.name : 'this user'}?`)) return;
+
+  try {
+    await api(`/users/${userId}`, { method: 'DELETE' });
+    state.users = state.users.filter(u => u.id !== userId);
+    showToast('User removed', 'info');
+    if (state.activeTab === 'admin') renderAdminTab();
+    if (state.currentTrip) renderAll();
+  } catch (err) {
+    showToast('Failed to delete user', 'error');
+  }
+};
+
+window.handleToggleEndTrip = async function(tripId) {
+  try {
+    const updated = await api(`/trips/${tripId}/toggle-end`, { method: 'POST' });
+    const idx = state.trips.findIndex(t => t.id === tripId);
+    if (idx !== -1) state.trips[idx] = updated;
+
+    if (state.currentTrip && state.currentTrip.id === tripId) {
+      state.currentTrip = updated;
+    }
+
+    showToast(`Trip is now ${updated.status}!`, updated.status === 'ENDED' ? 'info' : 'success');
+    renderTripSelector();
+    renderAll();
+  } catch (err) {
+    showToast('Failed to toggle trip status', 'error');
+  }
+};
+
+window.handleDeleteTrip = async function(tripId) {
+  const trip = state.trips.find(t => t.id === tripId);
+  if (!confirm(`Permanently delete trip "${trip ? trip.title : tripId}" and all its expenses?`)) return;
+
+  try {
+    await api(`/trips/${tripId}`, { method: 'DELETE' });
+    state.trips = state.trips.filter(t => t.id !== tripId);
+    showToast('Trip deleted', 'info');
+    await fetchTrips();
+    if (state.trips.length > 0) {
+      await selectTrip(state.trips[0].id);
+    } else {
+      renderEmptyState();
+    }
+    if (state.activeTab === 'admin') renderAdminTab();
+  } catch (err) {
+    showToast('Failed to delete trip', 'error');
+  }
+};
+
+async function handleAdminSettingsSave(e) {
+  e.preventDefault();
+  const payload = {
+    defaultPerDiemLimit: Number(document.getElementById('adminSettingPerDiem').value),
+    defaultReceiptRequiredThreshold: Number(document.getElementById('adminSettingReceiptThreshold').value)
+  };
+
+  try {
+    await api('/admin/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    showToast('Global corporate policies saved!', 'success');
+    renderAdminTab();
+  } catch (err) {
+    showToast('Failed to save settings', 'error');
+  }
+}
+
+async function handleAdminExportBackup() {
+  try {
+    const backupData = await api('/admin/backup');
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `omnivance_ledger_backup_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Database backup downloaded!', 'success');
+  } catch (err) {
+    showToast('Failed to export backup', 'error');
+  }
+}
+
+function handleAdminRestoreBackup(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = async (event) => {
+    try {
+      const parsed = JSON.parse(event.target.result);
+      if (!parsed.trips || !parsed.users) {
+        showToast('Invalid backup file schema', 'error');
+        return;
+      }
+
+      await api('/admin/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: parsed })
+      });
+
+      showToast('Database restored successfully!', 'success');
+      await fetchUsers();
+      await fetchTrips();
+      if (state.trips.length > 0) {
+        await selectTrip(state.trips[0].id);
+      } else {
+        renderEmptyState();
+      }
+      renderAdminTab();
+    } catch (err) {
+      showToast('Failed to parse backup JSON file', 'error');
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function handleAdminCleanReset() {
+  if (!confirm('CAUTION: Are you sure you want to reset the database to a clean, empty state?')) return;
+  try {
+    await api('/reset', { method: 'POST' });
+    showToast('Database reset to clean state', 'info');
+    await fetchUsers();
+    await fetchTrips();
+    renderEmptyState();
+    renderAdminTab();
+  } catch (err) {
+    showToast('Failed to reset database', 'error');
   }
 }
 
@@ -1473,10 +2318,20 @@ async function handleApprovalAction(action) {
   }
 }
 
+window.copyToClipboard = function(text, label = 'Text') {
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    showToast(`${label} copied to clipboard!`, 'success');
+  }).catch(() => {
+    showToast('Could not copy to clipboard', 'error');
+  });
+};
+
 // ==================== TOAST NOTIFICATION SYSTEM ====================
 
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
+  if (!container) return;
   const toast = document.createElement('div');
 
   const bgStyles = {
